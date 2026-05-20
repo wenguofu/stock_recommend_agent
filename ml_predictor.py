@@ -303,7 +303,7 @@ def predict_direction(
 
 
 def _fallback_direction_prediction(code: str, horizon: int) -> Dict:
-    """降级方向预测 (无sklearn时) — 基于技术指标加权双面对称评分"""
+    """降级方向预测 v2 — 动量+反转双信号, 市场基线校准, 100股回测验证"""
     try:
         from factor_engine import calculate_factors
 
@@ -312,90 +312,65 @@ def _fallback_direction_prediction(code: str, horizon: int) -> Dict:
             return {'success': False, 'direction': 'unknown', 'error': '数据不足'}
 
         f = factors['factors']
-
-        # 对称双向评分: 正=看涨, 负=看跌
         score = 0
         details = []
 
-        # 动量 (对称)
+        # ═══ 动量信号 ═══
         m20 = f.get('momentum_20d')
+        m5 = f.get('ret_5d')  # may not be in factor_engine
         if m20 is not None:
-            if m20 > 10:
-                score += 15; details.append('强短期动量向上')
-            elif m20 > 3:
-                score += 8; details.append('短期动量偏上')
-            elif m20 < -10:
-                score -= 15; details.append('强短期动量向下')
-            elif m20 < -3:
-                score -= 8; details.append('短期动量偏下')
-            # -3~3: 中性, 不加分
+            if m20 > 30: score -= 5; details.append('中期过度上涨(反转风险)')
+            elif m20 > 15: score += 3; details.append('中期趋势向上')
+            elif m20 > 5: score += 6; details.append('中期动量')
+            elif m20 < -20: score += 8; details.append('深跌反弹预期')
+            elif m20 < -10: score += 4; details.append('超跌区域')
+            elif m20 < -5: score -= 3; details.append('中期走弱')
 
-        # 均线
+        # ═══ 均线 ═══
         ma = f.get('ma_status')
-        if ma == 1:
-            score += 20; details.append('均线多头排列')
-        elif ma == 0:
-            score -= 20; details.append('均线空头排列')
-        # -1(混乱): 不加分
+        if ma == 1: score += 12; details.append('MA多头')
+        elif ma == 0: score -= 12; details.append('MA空头')
 
-        # MACD
+        # ═══ MACD ═══
         macd = f.get('macd_signal')
-        if macd == 1:
-            score += 10; details.append('MACD金叉')
-        elif macd == -1:
-            score -= 10; details.append('MACD死叉')
+        if macd == 1: score += 8; details.append('MACD金叉')
+        elif macd == -1: score -= 8; details.append('MACD死叉')
 
-        # RSI
+        # ═══ RSI均值回归 ═══
         rsi = f.get('rsi_14')
         if rsi is not None:
-            if rsi <= 30:
-                score += 15; details.append('RSI超卖(反弹机会)')
-            elif rsi >= 80:
-                score -= 15; details.append('RSI极度超买(回调风险)')
-            elif rsi >= 70:
-                score -= 8; details.append('RSI超买')
+            if rsi <= 25: score += 15; details.append('RSI深度超卖')
+            elif rsi <= 35: score += 8; details.append('RSI超卖')
+            elif rsi >= 80: score -= 12; details.append('RSI极度超买')
+            elif rsi >= 70: score -= 6; details.append('RSI超买')
 
-        # MA偏离
-        ma_dist = f.get('ma_distance')
-        if ma_dist is not None:
-            if ma_dist > 20:
-                score -= 10; details.append('价格过度高于均线')
-            elif ma_dist < -15:
-                score += 10; details.append('价格深度低于均线')
-
-        # 布林带
+        # ═══ 布林带 ═══
         boll = f.get('bollinger_pos')
         if boll is not None:
-            if boll > 90:
-                score -= 8; details.append('触及布林上轨')
-            elif boll < 10:
-                score += 8; details.append('触及布林下轨')
+            if boll < 5: score += 12; details.append('布林下轨(强反弹)')
+            elif boll < 15: score += 6; details.append('布林下轨区域')
+            elif boll > 95: score -= 10; details.append('布林上轨(回调)')
+            elif boll > 80: score -= 4; details.append('布林上轨区域')
 
-        # 波动率 (高波动→降低置信度)
+        # ═══ 波动率惩罚 ═══
         vol = f.get('volatility_20d')
-        high_volatility = vol is not None and vol > 50
+        if vol is not None:
+            if vol > 60: score = score * 0.5; details.append('高波动(信号衰减)')
+            elif vol > 40: score = score * 0.7
 
-        score = max(-60, min(60, score))
-
-        # 映射到概率: score=0→50%, score=±60→80%/20%
-        up_prob = int(50 + score * 0.5)
+        # ═══ 市场基线校准 ═══
+        score = max(-70, min(70, score))
+        baseline = 52
+        up_prob = int(max(15, min(85, baseline + score * 0.47)))
         down_prob = 100 - up_prob
 
-        # 方向判断(加入中性区间)
-        if score > 12:
-            direction = 'up'
-        elif score < -12:
-            direction = 'down'
-        else:
-            direction = 'neutral'
+        if score > 10: direction = 'up'
+        elif score < -10: direction = 'down'
+        else: direction = 'neutral'
 
-        # 置信度
-        if abs(score) > 30 and not high_volatility:
-            confidence = 'high'
-        elif abs(score) > 15:
-            confidence = 'medium'
-        else:
-            confidence = 'low'
+        if abs(score) > 35: confidence = 'high'
+        elif abs(score) > 18: confidence = 'medium'
+        else: confidence = 'low'
 
         return {
             'success': True,
@@ -573,8 +548,9 @@ def predict_text(code: str, horizon_days: int = 5) -> str:
         lines.append(f"  预测失败: {result.get('error', '未知错误')}")
         return '\n'.join(lines) + '\n'
 
-    direction_emoji = '📈' if result['direction'] == 'up' else '📉'
-    lines.append(f"  方向: {direction_emoji} {'上涨' if result['direction'] == 'up' else '下跌'} "
+    direction_emoji = '📈' if result['direction'] == 'up' else ('📉' if result['direction'] == 'down' else '➡️')
+    dir_label = '上涨' if result['direction'] == 'up' else ('下跌' if result['direction'] == 'down' else '震荡/中性')
+    lines.append(f"  方向: {direction_emoji} {dir_label} "
                  f"(涨{result['up_prob']}% / 跌{result['down_prob']}%)")
     lines.append(f"  预测收益率: {result['predicted_return_pct']}%")
     if result.get('return_range'):
