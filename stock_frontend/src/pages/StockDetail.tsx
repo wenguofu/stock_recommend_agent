@@ -518,9 +518,13 @@ export default function StockDetail() {
             <div>
               <div className="text-xs text-gray-500 dark:text-gray-400">预测方向</div>
               <div className={`font-bold text-lg ${
-                mlData.direction === 'up' ? 'text-red-500' : 'text-green-500'
+                mlData.direction === 'up' ? 'text-red-500' :
+                mlData.direction === 'down' ? 'text-green-500' :
+                'text-gray-500'
               }`}>
-                {mlData.direction === 'up' ? '📈 看涨' : '📉 看跌'}
+                {mlData.direction === 'up' ? '📈 看涨' :
+                 mlData.direction === 'down' ? '📉 看跌' :
+                 '➡️ 中性'}
               </div>
             </div>
             <div>

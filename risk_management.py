@@ -599,8 +599,8 @@ def risk_report(
         pnl_pct = (current_price / cost - 1) * 100
 
         # 基于VaR的最大可能损失
-        var_amount = var_result.get('var_amount', 0) or 0
-        max_loss_estimate = var_amount * shares if position.get('shares') else 0
+        var_pct_val = var_result.get('var_pct', 0) or 0
+        max_loss_estimate = (var_pct_val / 100) * market_value if market_value > 0 else 0
 
         report['position_analysis'] = {
             'shares': shares,

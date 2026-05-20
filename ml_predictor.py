@@ -242,8 +242,12 @@ def predict_direction(
                 result['success'] = True
                 return result
 
-            model = LogisticRegression(max_iter=1000, C=1.0)
+            model = LogisticRegression(max_iter=1000, C=1.0, class_weight='balanced')
             model.fit(X_train, y_train)
+
+            # 基线: 训练集中上涨的比例
+            baseline_up = float(np.mean(y_train))
+            result['baseline_up_pct'] = round(baseline_up * 100, 1)
 
             # 预测
             X_latest = X_scaled[-1:]
@@ -299,7 +303,7 @@ def predict_direction(
 
 
 def _fallback_direction_prediction(code: str, horizon: int) -> Dict:
-    """降级方向预测 (无sklearn时) — 基于技术指标加权"""
+    """降级方向预测 (无sklearn时) — 基于技术指标加权双面对称评分"""
     try:
         from factor_engine import calculate_factors
 
@@ -309,57 +313,98 @@ def _fallback_direction_prediction(code: str, horizon: int) -> Dict:
 
         f = factors['factors']
 
-        # 简单评分
+        # 对称双向评分: 正=看涨, 负=看跌
         score = 0
         details = []
 
-        # 动量
+        # 动量 (对称)
         m20 = f.get('momentum_20d')
         if m20 is not None:
-            if m20 > 5:
-                score += 20
-                details.append('短期动量向上')
-            elif m20 < -5:
-                score -= 20
-                details.append('短期动量向下')
+            if m20 > 10:
+                score += 15; details.append('强短期动量向上')
+            elif m20 > 3:
+                score += 8; details.append('短期动量偏上')
+            elif m20 < -10:
+                score -= 15; details.append('强短期动量向下')
+            elif m20 < -3:
+                score -= 8; details.append('短期动量偏下')
+            # -3~3: 中性, 不加分
 
         # 均线
         ma = f.get('ma_status')
         if ma == 1:
-            score += 25
-            details.append('均线多头排列')
+            score += 20; details.append('均线多头排列')
         elif ma == 0:
-            score -= 25
-            details.append('均线空头排列')
+            score -= 20; details.append('均线空头排列')
+        # -1(混乱): 不加分
 
         # MACD
         macd = f.get('macd_signal')
         if macd == 1:
-            score += 15
-            details.append('MACD金叉')
+            score += 10; details.append('MACD金叉')
+        elif macd == -1:
+            score -= 10; details.append('MACD死叉')
 
         # RSI
         rsi = f.get('rsi_14')
         if rsi is not None:
-            if 30 <= rsi <= 40:
-                score += 10
-                details.append('RSI超卖反弹')
+            if rsi <= 30:
+                score += 15; details.append('RSI超卖(反弹机会)')
+            elif rsi >= 80:
+                score -= 15; details.append('RSI极度超买(回调风险)')
             elif rsi >= 70:
-                score -= 10
-                details.append('RSI超买')
+                score -= 8; details.append('RSI超买')
+
+        # MA偏离
+        ma_dist = f.get('ma_distance')
+        if ma_dist is not None:
+            if ma_dist > 20:
+                score -= 10; details.append('价格过度高于均线')
+            elif ma_dist < -15:
+                score += 10; details.append('价格深度低于均线')
+
+        # 布林带
+        boll = f.get('bollinger_pos')
+        if boll is not None:
+            if boll > 90:
+                score -= 8; details.append('触及布林上轨')
+            elif boll < 10:
+                score += 8; details.append('触及布林下轨')
+
+        # 波动率 (高波动→降低置信度)
+        vol = f.get('volatility_20d')
+        high_volatility = vol is not None and vol > 50
 
         score = max(-60, min(60, score))
-        up_prob = 50 + score
+
+        # 映射到概率: score=0→50%, score=±60→80%/20%
+        up_prob = int(50 + score * 0.5)
         down_prob = 100 - up_prob
+
+        # 方向判断(加入中性区间)
+        if score > 12:
+            direction = 'up'
+        elif score < -12:
+            direction = 'down'
+        else:
+            direction = 'neutral'
+
+        # 置信度
+        if abs(score) > 30 and not high_volatility:
+            confidence = 'high'
+        elif abs(score) > 15:
+            confidence = 'medium'
+        else:
+            confidence = 'low'
 
         return {
             'success': True,
             'code': code,
             'horizon_days': horizon,
-            'direction': 'up' if up_prob > 50 else 'down',
+            'direction': direction,
             'up_prob': up_prob,
             'down_prob': down_prob,
-            'confidence': 'medium' if abs(score) > 20 else 'low',
+            'confidence': confidence,
             'method': 'rule_based',
             'details': details,
             'timestamp': datetime.now().isoformat(),
@@ -465,7 +510,7 @@ def predict_return(
 
 def predict(code: str, horizon_days: int = 5) -> Dict:
     """
-    综合预测: 方向 + 收益率
+    综合预测: 方向 + 收益率 (两模型结果协调一致)
 
     Returns:
         dict: {direction, up_prob, predicted_return, confidence, factors}
@@ -473,15 +518,34 @@ def predict(code: str, horizon_days: int = 5) -> Dict:
     direction = predict_direction(code, horizon_days)
     returns = predict_return(code, horizon_days)
 
+    raw_return = returns.get('predicted_return_pct', 0)
+    up_prob = direction.get('up_prob', 50)
+    down_prob = direction.get('down_prob', 50)
+    dir_val = direction.get('direction', 'unknown')
+
+    # 协调: 确保预测收益率符号与方向一致
+    if dir_val == 'up':
+        # 看涨: 收益率取正 (至少为0)
+        reconciled_return = max(0, raw_return) if raw_return is not None else up_prob / 100 * 5
+    elif dir_val == 'down':
+        # 看跌: 收益率取负 (至多为0)
+        reconciled_return = min(0, raw_return) if raw_return is not None else -down_prob / 100 * 5
+    else:
+        # 中性: 用概率加权
+        if raw_return is not None:
+            reconciled_return = (up_prob / 100) * max(0, raw_return) + (down_prob / 100) * min(0, raw_return)
+        else:
+            reconciled_return = 0
+
     result = {
         'success': direction.get('success', False) or returns.get('success', False),
         'code': code,
         'horizon_days': horizon_days,
         'timestamp': datetime.now().isoformat(),
-        'direction': direction.get('direction', 'unknown'),
-        'up_prob': direction.get('up_prob', 50),
-        'down_prob': direction.get('down_prob', 50),
-        'predicted_return_pct': returns.get('predicted_return_pct', 0),
+        'direction': dir_val,
+        'up_prob': up_prob,
+        'down_prob': down_prob,
+        'predicted_return_pct': round(reconciled_return, 2),
         'confidence': direction.get('confidence', 'low'),
     }
 
@@ -490,6 +554,9 @@ def predict(code: str, horizon_days: int = 5) -> Dict:
 
     if direction.get('top_features'):
         result['key_factors'] = [f['name'] for f in direction['top_features'][:3]]
+
+    if direction.get('baseline_up_pct') is not None:
+        result['baseline_up_pct'] = direction['baseline_up_pct']
 
     return result
 
