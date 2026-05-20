@@ -80,6 +80,9 @@ def register_routes():
     # 注册风险管理API
     from risk_routes import register_risk_routes
     register_risk_routes(app)
+    # 注册因子+ML预测API
+    from factor_routes import register_factor_routes
+    register_factor_routes(app)
 
 def init_database():
     """初始化数据库和默认配置"""

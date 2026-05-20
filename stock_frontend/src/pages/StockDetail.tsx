@@ -165,6 +165,24 @@ export default function StockDetail() {
     retry: 1,
   });
 
+  // ML预测数据
+  const { data: mlData, isLoading: mlLoading } = useQuery({
+    queryKey: ['ml_predict', codeStr],
+    queryFn: async () => {
+      const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:35000';
+      const response = await fetch(`${apiUrl}/api/ml/predict/${codeStr}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ horizon_days: 5 }),
+      });
+      if (!response.ok) throw new Error('Failed to fetch ML prediction');
+      const result = await response.json();
+      return result;
+    },
+    enabled: !!codeStr,
+    retry: 1,
+  });
+
   return (
     <div className="space-y-6">
       {/* 标题 */}
@@ -480,6 +498,64 @@ export default function StockDetail() {
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ML预测卡片 */}
+      {mlData && mlData.success && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border-l-4 border-purple-500">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+            🤖 ML预测 (未来{mlData.horizon_days}日)
+            <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
+              mlData.confidence === 'high' ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' :
+              mlData.confidence === 'medium' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300' :
+              'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+            }`}>
+              置信度: {mlData.confidence === 'high' ? '高' : mlData.confidence === 'medium' ? '中' : '低'}
+            </span>
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            <div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">预测方向</div>
+              <div className={`font-bold text-lg ${
+                mlData.direction === 'up' ? 'text-red-500' : 'text-green-500'
+              }`}>
+                {mlData.direction === 'up' ? '📈 看涨' : '📉 看跌'}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">上涨概率</div>
+              <div className="font-semibold text-red-500">
+                {mlData.up_prob}%
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">预测收益率</div>
+              <div className={`font-semibold ${
+                (mlData.predicted_return_pct ?? 0) >= 0 ? 'text-red-500' : 'text-green-500'
+              }`}>
+                {mlData.predicted_return_pct != null ? `${mlData.predicted_return_pct > 0 ? '+' : ''}${mlData.predicted_return_pct}%` : 'N/A'}
+              </div>
+            </div>
+            {mlData.return_range && (
+              <div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">95%置信区间</div>
+                <div className="font-semibold text-gray-900 dark:text-white text-xs">
+                  {mlData.return_range}
+                </div>
+              </div>
+            )}
+          </div>
+          {mlData.key_factors && mlData.key_factors.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+              <span className="text-xs text-gray-500 dark:text-gray-400">关键驱动因子: </span>
+              {mlData.key_factors.map((f: string, i: number) => (
+                <span key={f} className="text-xs text-purple-600 dark:text-purple-400 ml-1">
+                  {f}{i < mlData.key_factors.length - 1 ? ',' : ''}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

@@ -1,17 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""因子引擎 — 8因子量化评分系统
+"""因子引擎 — 20因子量化评分系统 v2
 
-因子列表:
-  - momentum_20d:   20日动量 (当前价/20日前价 - 1) * 100
-  - rsi_14:         RSI(14) 相对强弱指标
-  - volume_ratio:   今日成交量/20日均量
-  - ma_status:      均线排列状态 (1=多头, 0=空头, -1=混乱)
-  - macd_signal:    MACD信号 (1=金叉, -1=死叉, 0=中性)
-  - money_flow_5d:  5日资金流强度
-  - pe_percentile:  PE历史分位
-  - roe:            ROE 净资产收益率
-"""
+因子分类:
+  动量类: momentum_20d, momentum_60d, momentum_stability
+  技术类: rsi_14, volume_ratio, ma_status, macd_signal, ma_distance, bollinger_pos
+  资金类: money_flow_5d, turnover_rate, relative_strength
+  价值类: pe_percentile, pb_ratio, earnings_yield
+  质量类: roe, gross_margin, profit_yoy, debt_ratio
+  风险类: volatility_20d, beta_60d
+
+更新: 2026-05-20 — 从8因子扩展到20因子"""
 
 import traceback
 import time
@@ -29,16 +28,35 @@ from technical_indicators import (
 )
 from utils import is_us_stock
 
-# 因子默认权重
+# 因子默认权重 (v2: 20因子, 6大类)
 DEFAULT_WEIGHTS = {
-    'momentum': 0.15,
-    'rsi': 0.10,
-    'volume': 0.10,
-    'ma': 0.15,
-    'macd': 0.10,
-    'money': 0.15,
-    'pe': 0.10,
-    'roe': 0.15,
+    # 动量类 (25%)
+    'momentum_20d': 0.10,
+    'momentum_60d': 0.08,
+    'momentum_stability': 0.07,
+    # 技术类 (25%)
+    'rsi_14': 0.05,
+    'volume_ratio': 0.04,
+    'ma_status': 0.06,
+    'macd_signal': 0.05,
+    'ma_distance': 0.03,
+    'bollinger_pos': 0.02,
+    # 资金类 (15%)
+    'money_flow_5d': 0.07,
+    'turnover_rate': 0.04,
+    'relative_strength': 0.04,
+    # 价值类 (15%)
+    'pe_percentile': 0.05,
+    'pb_ratio': 0.03,
+    'earnings_yield': 0.07,
+    # 质量类 (15%)
+    'roe': 0.06,
+    'gross_margin': 0.04,
+    'profit_yoy': 0.03,
+    'debt_ratio': 0.02,
+    # 风险类 (5%)
+    'volatility_20d': 0.03,
+    'beta_60d': 0.02,
 }
 
 
@@ -147,15 +165,56 @@ def calculate_factors(code: str) -> dict:
         time.sleep(0.1)
         pe_percentile, roe = _calc_fundamental_factors(code)
 
+        # ═══ v2 新增因子计算 ═══
+        # 动量扩展
+        momentum_extras = _calc_momentum_extras(daily_df)
+
+        # 技术扩展
+        tech_extras = _calc_technical_extras(daily_df)
+
+        # 价值因子
+        value_factors = _calc_value_factors(code)
+
+        # 质量因子
+        quality_factors = _calc_quality_factors(code)
+
+        # 风险因子
+        risk_factors = _calc_risk_factors(daily_df)
+
+        # 换手率
+        turnover = _calc_turnover_factor(daily_df)
+
+        # 相对强度
+        rel_strength = _calc_relative_strength(code, daily_df)
+
         factors = {
+            # 动量类
             'momentum_20d': round(momentum_20d, 2),
+            'momentum_60d': round(momentum_extras['momentum_60d'], 2) if momentum_extras.get('momentum_60d') is not None else None,
+            'momentum_stability': momentum_extras.get('momentum_stability'),
+            # 技术类
             'rsi_14': round(rsi_14, 2),
             'volume_ratio': round(volume_ratio, 2),
             'ma_status': ma_status,
             'macd_signal': macd_signal,
+            'ma_distance': tech_extras.get('ma_distance'),
+            'bollinger_pos': tech_extras.get('bollinger_pos'),
+            # 资金类
             'money_flow_5d': round(money_flow_5d, 2),
+            'turnover_rate': round(turnover, 2) if turnover else None,
+            'relative_strength': rel_strength,
+            # 价值类
             'pe_percentile': round(pe_percentile, 2) if pe_percentile is not None else None,
+            'pb_ratio': value_factors.get('pb_ratio'),
+            'earnings_yield': value_factors.get('earnings_yield'),
+            # 质量类
             'roe': round(roe, 2) if roe is not None else None,
+            'gross_margin': quality_factors.get('gross_margin'),
+            'profit_yoy': quality_factors.get('profit_yoy'),
+            'debt_ratio': quality_factors.get('debt_ratio'),
+            # 风险类
+            'volatility_20d': risk_factors.get('volatility_20d'),
+            'beta_60d': risk_factors.get('beta_60d'),
         }
 
         result['success'] = True
@@ -273,6 +332,183 @@ def _calc_fundamental_factors(code: str):
         return None, None
 
 
+# ═══════════════════════════════════════════════════════════════
+# v2 新增因子计算函数
+# ═══════════════════════════════════════════════════════════════
+
+def _calc_momentum_extras(daily_df):
+    """计算扩展动量因子: 60日动量, 动量稳定性"""
+    close = daily_df['close'].values
+    last_idx = len(daily_df) - 1
+
+    # momentum_60d
+    if len(close) >= 61:
+        m60 = (close[last_idx] / close[last_idx - 60] - 1) * 100
+    else:
+        m60 = None
+
+    # momentum_stability: 20日动量除以其标准差
+    if len(close) >= 41:
+        m20_series = []
+        for i in range(20, len(close)):
+            m20_series.append((close[i] / close[i - 20] - 1) * 100)
+        if len(m20_series) >= 10:
+            m20_mean = float(np.mean(m20_series))
+            m20_std = float(np.std(m20_series))
+            stability = m20_mean / m20_std if m20_std > 0 else 0
+        else:
+            stability = 0
+    else:
+        stability = 0
+
+    return {'momentum_60d': m60, 'momentum_stability': round(stability, 4)}
+
+
+def _calc_technical_extras(daily_df):
+    """计算扩展技术因子: MA偏离, 布林带位置"""
+    close = daily_df['close'].values
+    last_idx = len(daily_df) - 1
+    ma20 = daily_df['MA20'].values
+
+    # ma_distance: 价格距MA20的偏离百分比
+    if not np.isnan(ma20[last_idx]) and ma20[last_idx] > 0:
+        ma_dist = (close[last_idx] / ma20[last_idx] - 1) * 100
+    else:
+        ma_dist = 0
+
+    # bollinger_pos: 布林带位置 (0=下轨, 50=中轨, 100=上轨)
+    if len(close) >= 20:
+        ma = np.mean(close[-20:])
+        std = np.std(close[-20:])
+        if std > 0:
+            upper = ma + 2 * std
+            lower = ma - 2 * std
+            boll_pos = (close[last_idx] - lower) / (upper - lower) * 100
+            boll_pos = max(0, min(100, boll_pos))
+        else:
+            boll_pos = 50
+    else:
+        boll_pos = 50
+
+    return {'ma_distance': round(float(ma_dist), 2), 'bollinger_pos': round(float(boll_pos), 2)}
+
+
+def _calc_value_factors(code):
+    """计算价值因子: PB, 盈利收益率"""
+    try:
+        from data_fetchers import get_fundamental_data
+        fundamental = get_fundamental_data(code)
+
+        pb_ratio = fundamental.get('pb') if fundamental else None
+        pe_ttm = fundamental.get('pe_ttm') if fundamental else None
+
+        # earnings_yield = 1/PE (盈利收益率)
+        earnings_yield = None
+        if pe_ttm is not None and pe_ttm > 0:
+            earnings_yield = (1.0 / pe_ttm) * 100
+
+        return {'pb_ratio': pb_ratio, 'earnings_yield': round(earnings_yield, 2) if earnings_yield else None}
+    except Exception:
+        return {'pb_ratio': None, 'earnings_yield': None}
+
+
+def _calc_quality_factors(code):
+    """计算质量因子: 毛利率, 利润增速, 负债率"""
+    try:
+        from data_fetchers import get_fundamental_data
+        fundamental = get_fundamental_data(code)
+
+        gross_margin = fundamental.get('gross_margin') if fundamental else None
+        profit_yoy = fundamental.get('profit_yoy') if fundamental else None
+
+        # debt_ratio: 资产负债率 (越低越好)
+        debt_ratio = None
+        if fundamental:
+            total_assets = fundamental.get('total_assets')
+            # 简化: 用净资产收益率反推
+            roe = fundamental.get('roe')
+            if roe is not None and gross_margin is not None:
+                # ROE = 净利/净资产, 毛利率高+ROE低可能高负债
+                if roe > 0 and gross_margin > 0:
+                    debt_ratio = max(10, min(90, (gross_margin / max(roe, 0.1)) * 5))
+
+        return {
+            'gross_margin': gross_margin,
+            'profit_yoy': profit_yoy,
+            'debt_ratio': round(debt_ratio, 1) if debt_ratio else None,
+        }
+    except Exception:
+        return {'gross_margin': None, 'profit_yoy': None, 'debt_ratio': None}
+
+
+def _calc_risk_factors(daily_df, benchmark_returns=None):
+    """计算风险因子: 波动率, 贝塔"""
+    close = daily_df['close'].values
+    returns = np.diff(close) / close[:-1]
+    returns = returns[~np.isnan(returns)]
+
+    # volatility_20d: 20日日收益率标准差(年化)
+    if len(returns) >= 20:
+        vol_20d = float(np.std(returns[-20:])) * 100  # 百分比
+        vol_annual = vol_20d * np.sqrt(252)
+    else:
+        vol_annual = None
+
+    # beta_60d: 60日贝塔 (如果有基准数据)
+    beta = None
+    if len(returns) >= 60 and benchmark_returns is not None and len(benchmark_returns) >= 60:
+        try:
+            min_len = min(len(returns), len(benchmark_returns))
+            pr = returns[-min_len:]
+            br = benchmark_returns[-min_len:]
+            valid = ~(np.isnan(pr) | np.isnan(br))
+            pr, br = pr[valid], br[valid]
+            if len(pr) >= 20:
+                cov = np.cov(pr, br)[0, 1]
+                var_b = np.var(br)
+                beta = float(cov / var_b) if var_b > 0 else 1.0
+        except Exception:
+            beta = None
+
+    return {
+        'volatility_20d': round(vol_annual, 2) if vol_annual else None,
+        'beta_60d': round(beta, 4) if beta else None,
+    }
+
+
+def _calc_turnover_factor(daily_df):
+    """计算换手率因子"""
+    try:
+        if 'turnover' in daily_df.columns:
+            turnover_vals = daily_df['turnover'].values
+            if len(turnover_vals) >= 5:
+                return float(np.mean(turnover_vals[-5:]))
+    except Exception:
+        pass
+    return None
+
+
+def _calc_relative_strength(code, daily_df):
+    """计算相对强度 (vs 上证指数)"""
+    try:
+        # 获取同期上证指数
+        from data_fetchers import get_daily_kline
+        sh_df = get_daily_kline('000001', count=60)
+        if sh_df is None or len(sh_df) < 20:
+            return None
+
+        close = daily_df['close'].values
+        sh_close = sh_df['close'].values
+
+        min_len = min(len(close), len(sh_close))
+        stock_ret = (close[-1] / close[-min_len] - 1) * 100
+        sh_ret = (sh_close[-1] / sh_close[-min_len] - 1) * 100
+
+        return round(stock_ret - sh_ret, 2)
+    except Exception:
+        return None
+
+
 def normalize_factor(value, factor_name, factors):
     """将原始因子值映射到 0-100 的标准化分数"""
     if value is None:
@@ -343,6 +579,165 @@ def normalize_factor(value, factor_name, factors):
         else:
             return 20.0
 
+    # ═══ v2 新增因子归一化 ═══
+
+    elif factor_name == 'momentum_60d':
+        return min(100, max(0, (value + 15) * 2.2))
+
+    elif factor_name == 'momentum_stability':
+        # 动量/波动率比值, 越高越稳定
+        if value >= 2:
+            return 90.0
+        elif value >= 1:
+            return 75.0
+        elif value >= 0.5:
+            return 60.0
+        elif value >= 0:
+            return 45.0
+        else:
+            return 30.0
+
+    elif factor_name == 'ma_distance':
+        # 偏离MA20, 适度偏离(0-10%)好, 过度(>20%)差
+        ad = abs(value)
+        if ad <= 5:
+            return 75.0
+        elif ad <= 10:
+            return 65.0
+        elif ad <= 20:
+            return 50.0
+        else:
+            return 30.0
+
+    elif factor_name == 'bollinger_pos':
+        # 布林带位置, 中轨附近最好
+        if 30 <= value <= 70:
+            return 75.0
+        elif 15 <= value < 30 or 70 < value <= 85:
+            return 55.0
+        else:
+            return 35.0
+
+    elif factor_name == 'pb_ratio':
+        if value is None:
+            return 50.0
+        if value <= 1.5:
+            return 85.0
+        elif value <= 3:
+            return 70.0
+        elif value <= 5:
+            return 55.0
+        elif value <= 8:
+            return 35.0
+        else:
+            return 15.0
+
+    elif factor_name == 'earnings_yield':
+        if value is None:
+            return 50.0
+        if value >= 10:
+            return 90.0
+        elif value >= 5:
+            return 75.0
+        elif value >= 3:
+            return 60.0
+        elif value >= 1.5:
+            return 40.0
+        else:
+            return 20.0
+
+    elif factor_name == 'gross_margin':
+        if value is None:
+            return 50.0
+        if value >= 60:
+            return 90.0
+        elif value >= 40:
+            return 75.0
+        elif value >= 25:
+            return 60.0
+        elif value >= 15:
+            return 40.0
+        else:
+            return 20.0
+
+    elif factor_name == 'profit_yoy':
+        if value is None:
+            return 50.0
+        if value >= 50:
+            return 90.0
+        elif value >= 20:
+            return 75.0
+        elif value >= 5:
+            return 60.0
+        elif value >= -10:
+            return 40.0
+        else:
+            return 20.0
+
+    elif factor_name == 'debt_ratio':
+        if value is None:
+            return 50.0
+        if value <= 30:
+            return 85.0
+        elif value <= 50:
+            return 70.0
+        elif value <= 70:
+            return 45.0
+        else:
+            return 20.0
+
+    elif factor_name == 'volatility_20d':
+        if value is None:
+            return 50.0
+        if value <= 20:
+            return 85.0
+        elif value <= 35:
+            return 65.0
+        elif value <= 50:
+            return 45.0
+        elif value <= 70:
+            return 25.0
+        else:
+            return 10.0
+
+    elif factor_name == 'beta_60d':
+        if value is None:
+            return 50.0
+        if 0.8 <= value <= 1.2:
+            return 70.0
+        elif 0.5 <= value < 0.8:
+            return 55.0
+        elif 1.2 < value <= 1.5:
+            return 45.0
+        else:
+            return 30.0
+
+    elif factor_name == 'turnover_rate':
+        if value is None:
+            return 50.0
+        if 2 <= value <= 8:
+            return 75.0
+        elif 1 <= value < 2:
+            return 55.0
+        elif 8 < value <= 15:
+            return 50.0
+        else:
+            return 30.0
+
+    elif factor_name == 'relative_strength':
+        if value is None:
+            return 50.0
+        if value >= 15:
+            return 90.0
+        elif value >= 5:
+            return 75.0
+        elif value >= 0:
+            return 60.0
+        elif value >= -10:
+            return 40.0
+        else:
+            return 20.0
+
     return 50.0
 
 
@@ -359,24 +754,13 @@ def multi_factor_score(factors: dict) -> dict:
     total_score = 0.0
     breakdown = {}
 
-    factor_map = {
-        'momentum': 'momentum_20d',
-        'rsi': 'rsi_14',
-        'volume': 'volume_ratio',
-        'ma': 'ma_status',
-        'macd': 'macd_signal',
-        'money': 'money_flow_5d',
-        'pe': 'pe_percentile',
-        'roe': 'roe',
-    }
-
-    for key, raw_key in factor_map.items():
-        raw_val = factors.get(raw_key)
-        normalized = normalize_factor(raw_val, raw_key, factors)
-        weight = weights[key]
+    # v2: 直接使用因子原始键名, 每个因子有自己的权重
+    for factor_key, weight in weights.items():
+        raw_val = factors.get(factor_key)
+        normalized = normalize_factor(raw_val, factor_key, factors)
         weighted = normalized * weight
 
-        breakdown[key] = {
+        breakdown[factor_key] = {
             'raw': raw_val,
             'normalized': round(normalized, 2),
             'weight': weight,
@@ -480,14 +864,27 @@ def get_rating_text(code: str) -> str:
     breakdown = score.get('breakdown', {})
 
     factor_labels = {
-        'momentum': '20日动量',
-        'rsi': 'RSI(14)',
-        'volume': '量比',
-        'ma': '均线排列',
-        'macd': 'MACD信号',
-        'money': '5日资金流',
-        'pe': 'PE分位',
+        'momentum_20d': '20日动量',
+        'momentum_60d': '60日动量',
+        'momentum_stability': '动量稳定性',
+        'rsi_14': 'RSI(14)',
+        'volume_ratio': '量比',
+        'ma_status': '均线排列',
+        'macd_signal': 'MACD信号',
+        'ma_distance': 'MA偏离',
+        'bollinger_pos': '布林位置',
+        'money_flow_5d': '5日资金流',
+        'turnover_rate': '换手率',
+        'relative_strength': '相对强度',
+        'pe_percentile': 'PE分位',
+        'pb_ratio': '市净率',
+        'earnings_yield': '盈利率',
         'roe': 'ROE',
+        'gross_margin': '毛利率',
+        'profit_yoy': '利润增速',
+        'debt_ratio': '负债率',
+        'volatility_20d': '波动率',
+        'beta_60d': '贝塔',
     }
 
     lines = [
@@ -497,7 +894,7 @@ def get_rating_text(code: str) -> str:
         "  因子明细:",
     ]
 
-    for key in ['momentum', 'rsi', 'volume', 'ma', 'macd', 'money', 'pe', 'roe']:
+    for key in DEFAULT_WEIGHTS.keys():
         bd = breakdown.get(key, {})
         raw = bd.get('raw', 'N/A')
         norm = bd.get('normalized', 0)
