@@ -22,9 +22,7 @@ const QUANT_NAV = [
 
 /** 中长线交易导航 */
 const MIDLINE_NAV = [
-  { path: '/midline', label: '🏠中长线看板' },
-  { path: '/watchlist', label: '自选池' },
-  { path: '/midline/journal', label: '交易日志' },
+  { path: '/midline', label: '📋 自选池健康度' },
   { path: '/settings', label: '配置' },
 ];
 
