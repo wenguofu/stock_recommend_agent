@@ -4,7 +4,7 @@ import Home from './pages/Home';
 import Watchlist from './pages/Watchlist';
 import StockDetail from './pages/StockDetail';
 import Tasks from './pages/Tasks';
-import Strategy from './pages/Strategy';
+import StrategyRecommend from './pages/StrategyRecommend';
 import StrategyLibrary from './pages/StrategyLibrary';
 import StrategyRun from './pages/StrategyRun';
 import Settings from './pages/Settings';
@@ -15,6 +15,7 @@ import PaperRankings from './pages/PaperRankings';
 import PaperBreakdown from './pages/PaperBreakdown';
 import Recommendations from './pages/Recommendations';
 import BacktestPage from './pages/BacktestPage';
+import SectorPrediction from './pages/SectorPrediction';
 import Layout from './components/Layout';
 import './index.css';
 
@@ -38,7 +39,7 @@ function App() {
             <Route path="/watchlist" element={<Watchlist />} />
             <Route path="/stock/:code" element={<StockDetail />} />
             <Route path="/tasks" element={<Tasks />} />
-            <Route path="/strategy" element={<Strategy />} />
+            <Route path="/strategy" element={<StrategyRecommend />} />
             <Route path="/strategies" element={<StrategyLibrary />} />
             <Route path="/strategies/:id/run" element={<StrategyRun />} />
             <Route path="/ai-debate" element={<AIDebate />} />
@@ -49,6 +50,7 @@ function App() {
             <Route path="/paper/breakdown/:id" element={<PaperBreakdown />} />
             <Route path="/recommendations" element={<Recommendations />} />
             <Route path="/backtest" element={<BacktestPage />} />
+            <Route path="/sector-prediction" element={<SectorPrediction />} />
           </Routes>
         </Layout>
       </BrowserRouter>

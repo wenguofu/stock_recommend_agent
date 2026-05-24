@@ -206,6 +206,22 @@ def task_eod_prefetch():
         return f"❌ 收盘刷新失败: {e}"
 
 
+def task_watchlist_refresh():
+    """自选股数据刷新"""
+    script = os.path.join(PROJECT_ROOT, 'scripts', 'refresh_watchlist.py')
+    try:
+        result = subprocess.run(
+            [sys.executable, script],
+            capture_output=True, text=True, timeout=30, cwd=PROJECT_ROOT
+        )
+        output = result.stdout.strip()
+        return f"📊 自选股刷新\n{output}" if output else None
+    except subprocess.TimeoutExpired:
+        return "⏰ 自选股刷新超时"
+    except Exception as e:
+        return f"❌ 自选股刷新失败: {e}"
+
+
 # ═══════════════════════════════════════════
 # 调度器核心
 # ═══════════════════════════════════════════
@@ -294,6 +310,17 @@ TASKS = [
         'func': task_generate_recommendations,
         'type': 'cron',
         'cron': '0 16 * * 1-5',
+        'last_date': '',
+        'last_run': 0,
+        'run_count': 0,
+        'last_output': '',
+        'last_error': '',
+    },
+    {
+        'name': '自选股数据刷新',
+        'func': task_watchlist_refresh,
+        'type': 'cron',
+        'cron': '*/30 9-15 * * 1-5',
         'last_date': '',
         'last_run': 0,
         'run_count': 0,

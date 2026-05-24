@@ -188,7 +188,22 @@ if __name__ == "__main__":
     
     report = cross_reference(sector_data, holdings, watchlist)
     path = send_to_wechat(report)
-    
+
+    # 运行主线预判引擎
+    try:
+        from sector_prediction import predict_sectors, format_report
+        results = predict_sectors(sector_data["sectors"])
+        pred_report = format_report(results, sector_data["date"])
+        eval_dir = os.path.join(os.path.dirname(__file__), "eval_result")
+        os.makedirs(eval_dir, exist_ok=True)
+        pred_path = os.path.join(eval_dir, f"主线预判_{datetime.now().strftime('%Y%m%d')}.md")
+        with open(pred_path, "w", encoding="utf-8") as f:
+            f.write(pred_report)
+        print(f"🔮 主线预判已保存: {pred_path}")
+    except Exception as e:
+        print(f"[WARN] 主线预判引擎异常: {e}")
+
     print(f"\n💡 使用示例:")
     print(f"   下次导入: uv run python sector_import.py 九大板块_YYYYMMDD.pdf")
     print(f"   交叉分析: uv run python sector_analysis.py")
+    print(f"   主线预判: uv run python sector_prediction.py")

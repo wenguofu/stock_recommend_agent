@@ -57,6 +57,24 @@ def format_pct(v):
 
 def check_watchlist_alerts():
     """检查自选股预警"""
+    # 加载持仓真实成本（含T+0收益调整）
+    # 绝对路径：cron从~/.hermes/scripts/执行时也能找到
+    PROJECT_ROOT = os.environ.get("A_STOCK_ROOT", "/Users/wgfu/work/a-stock-trading")
+    positions_file = os.path.join(PROJECT_ROOT, "positions.json")
+    effective_costs = {}
+    try:
+        with open(positions_file, encoding="utf-8") as f:
+            positions_data = json.load(f)
+            for h in positions_data.get("holdings", []):
+                effective_costs[h["code"]] = {
+                    "cost": h.get("cost", h.get("raw_cost", 0)),
+                    "raw_cost": h.get("raw_cost", h.get("cost", 0)),
+                    "t_profit": h.get("t_profit", 0),
+                    "shares": h.get("shares", 0),
+                }
+    except Exception:
+        pass  # positions.json 不存在时跳过
+
     # 获取自选股列表
     watch_data = api_get('/api/watchlist')
     if not watch_data or not watch_data.get('success'):
@@ -120,15 +138,30 @@ def check_watchlist_alerts():
                         ratio = recent_vol / prev_vol if prev_vol > 0 else 0
                         alerts.append(f"🔥 {stock_info} 放量{ratio:.1f}倍 价格{format_price(current_price)}")
         
-        # 3. 持仓盈亏提醒（有持仓时）
+        # 3. 持仓盈亏提醒（有持仓时，使用真实成本含T+0收益）
         cost = stock.get('cost_price')
         shares = stock.get('shares')
         if cost and shares and shares > 0:
-            pnl_pct = (current_price - cost) / cost * 100
-            if abs(pnl_pct) >= PRICE_CHANGE_WARN:
-                pnl = (current_price - cost) * shares
-                emoji = '💰' if pnl > 0 else '📉'
-                alerts.append(f"{emoji} {stock_info} 持仓盈亏{format_pct(pnl_pct)} ({'赚' if pnl > 0 else '亏'}{abs(pnl):.0f}元)")
+            # 优先用真实成本（已扣除T收益），无记录时用账面成本
+            pos = effective_costs.get(code)
+            raw_cost = cost
+            effective_cost = pos["cost"] if pos else cost
+            t_profit = pos["t_profit"] if pos else 0
+
+            # 账面盈亏（对比原始成本）
+            paper_pnl_pct = (current_price - raw_cost) / raw_cost * 100
+            # 真实盈亏（对比扣除T收益后的实际成本）
+            real_pnl_pct = (current_price - effective_cost) / effective_cost * 100
+            real_pnl = (current_price - effective_cost) * shares
+
+            # 用真实盈亏判断预警
+            if abs(real_pnl_pct) >= PRICE_CHANGE_WARN:
+                emoji = '💰' if real_pnl > 0 else '📉'
+                pnl_str = f"{'赚' if real_pnl > 0 else '亏'}{abs(real_pnl):.0f}元"
+                cost_str = f"成本{effective_cost:.2f}"
+                if t_profit > 0 and effective_cost != raw_cost:
+                    cost_str += f"(含T收益+{t_profit})"
+                alerts.append(f"{emoji} {stock_info} {cost_str} 真实盈亏{format_pct(real_pnl_pct)} ({pnl_str})")
         
         # 4. 接近前高/前低
         if yest_close and high:

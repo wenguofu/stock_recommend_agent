@@ -305,6 +305,31 @@ class Recommendation(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 
+class StockFinancial(Base):
+    """基本面财务数据表"""
+    __tablename__ = 'stock_financials'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, index=True)
+    report_date = Column(String(10), nullable=False)
+    report_type = Column(String(10))
+    revenue = Column(Float)
+    net_profit = Column(Float)
+    gross_profit = Column(Float)
+    eps = Column(Float)
+    roe = Column(Float)
+    gross_margin = Column(Float)
+    net_margin = Column(Float)
+    pe_ttm = Column(Float)
+    pb = Column(Float)
+    pe_industry = Column(Float)
+    pb_industry = Column(Float)
+    revenue_yoy = Column(Float)
+    profit_yoy = Column(Float)
+    total_assets = Column(Float)
+    created_at = Column(DateTime, default=datetime.now)
+
+
 # ═══════════════════════════════════════════════════════════════
 # 新增: 风险管理模型
 # ═══════════════════════════════════════════════════════════════

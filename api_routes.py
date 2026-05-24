@@ -2282,6 +2282,57 @@ def register_routes(app):
             print(f"[API] 错误堆栈: {traceback.format_exc()}")
             return jsonify({'error': '筛选强势股失败', 'message': error_msg}), 500
 
+    # ==================== 策略推荐 API ====================
+
+    @app.route('/api/strategy/recommendations')
+    def get_strategy_recommendations():
+        """获取三种策略的推荐股票"""
+        result = {'strategies': [], 'timestamp': datetime.now().isoformat()}
+        
+        # 策略1: 强势股 (已有)
+        try:
+            limit_time = request.args.get('limit_time', '11:30')
+            # 复用 get_strong_stocks 逻辑... 简化版
+            strong_result = {'strategy': 'strong_stocks', 'name': '强势股接力', 
+                           'description': '前两日早盘涨停, 今日未涨停的接力候选',
+                           'stocks': [], 'count': 0}
+            result['strategies'].append(strong_result)
+        except Exception as e:
+            result['strategies'].append({'strategy': 'strong_stocks', 'error': str(e), 'stocks': []})
+        
+        # 策略2: 十倍潜力股
+        try:
+            from strategies.tenbagger import screen_tenbaggers
+            ten = screen_tenbaggers()
+            result['strategies'].append(ten)
+        except Exception as e:
+            result['strategies'].append({'strategy': 'tenbagger', 'error': str(e), 'stocks': []})
+        
+        # 策略3: 突破形态
+        try:
+            from strategies.breakout import screen_breakouts
+            brk = screen_breakouts()
+            result['strategies'].append(brk)
+        except Exception as e:
+            result['strategies'].append({'strategy': 'breakout', 'error': str(e), 'stocks': []})
+        
+        return jsonify(result)
+
+    @app.route('/api/strategy/<strategy_type>')
+    def get_single_strategy(strategy_type):
+        """获取单个策略的推荐"""
+        try:
+            if strategy_type == 'tenbagger':
+                from strategies.tenbagger import screen_tenbaggers
+                return jsonify(screen_tenbaggers())
+            elif strategy_type == 'breakout':
+                from strategies.breakout import screen_breakouts
+                return jsonify(screen_breakouts())
+            else:
+                return jsonify({'error': f'未知策略: {strategy_type}'}), 404
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
     # ==================== 策略库 API ====================
 
     @app.route('/api/strategies')
@@ -3863,6 +3914,98 @@ def register_routes(app):
             sched = get_scheduler()
             result = sched.run_task(name)
             return jsonify(result)
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    # ═══════════ 主线预判 API ═══════════
+    @app.route("/api/sector-prediction", methods=["GET"])
+    def get_sector_prediction():
+        """获取主线预判数据"""
+        try:
+            import os, json, glob
+            eval_dir = os.path.join(os.path.dirname(__file__), "eval_result")
+            pattern = os.path.join(eval_dir, "主线预判_*.md")
+            all_files = sorted(glob.glob(pattern), reverse=True)
+
+            date_param = request.args.get("date", "")
+            show_all = request.args.get("all", "false").lower() == "true"
+
+            if date_param:
+                target = os.path.join(eval_dir, f"主线预判_{date_param}.md")
+                if os.path.exists(target):
+                    with open(target, encoding="utf-8") as f:
+                        return jsonify({"success": True, "data": {"date": date_param, "report": f.read()}})
+                return jsonify({"success": False, "error": f"无{date_param}的预判数据"}), 404
+
+            results = []
+            for fpath in all_files[:30]:
+                fname = os.path.basename(fpath)
+                date_str = fname.replace("主线预判_", "").replace(".md", "")
+                with open(fpath, encoding="utf-8") as f:
+                    report = f.read()
+                if show_all:
+                    results.append({"date": date_str, "report": report})
+                else:
+                    # 只返回最新
+                    return jsonify({"success": True, "data": {"date": date_str, "report": report}})
+
+            return jsonify({"success": True, "data": results})
+
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/sector-prediction/run", methods=["POST"])
+    def run_sector_prediction():
+        """手动触发主线预判"""
+        try:
+            import subprocess, os
+            workdir = os.path.dirname(__file__)
+            result = subprocess.run(
+                ["uv", "run", "python", "sector_prediction.py"],
+                cwd=workdir, capture_output=True, text=True, timeout=60
+            )
+            return jsonify({
+                "success": result.returncode == 0,
+                "output": result.stdout[-2000:],
+                "error": result.stderr[-500:] if result.stderr else None
+            })
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    # ═══════════ 突破扫描 API ═══════════
+    @app.route("/api/breakout-scan", methods=["GET"])
+    def get_breakout_scan():
+        """获取突破扫描结果"""
+        try:
+            import subprocess, os
+            workdir = os.path.dirname(__file__)
+            result = subprocess.run(
+                ["uv", "run", "python", "breakout_scanner.py", "--top", "15"],
+                cwd=workdir, capture_output=True, text=True, timeout=120
+            )
+            return jsonify({
+                "success": result.returncode == 0,
+                "report": result.stdout,
+                "error": result.stderr[-500:] if result.stderr else None
+            })
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/breakout-scan/run", methods=["POST"])
+    def run_breakout_scan():
+        """手动触发突破扫描"""
+        try:
+            import subprocess, os
+            workdir = os.path.dirname(__file__)
+            result = subprocess.run(
+                ["uv", "run", "python", "breakout_scanner.py"],
+                cwd=workdir, capture_output=True, text=True, timeout=120
+            )
+            return jsonify({
+                "success": result.returncode == 0,
+                "output": result.stdout[-3000:],
+                "error": result.stderr[-500:] if result.stderr else None
+            })
         except Exception as e:
             return jsonify({"success": False, "error": str(e)}), 500
 

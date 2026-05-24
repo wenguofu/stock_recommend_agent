@@ -4,85 +4,105 @@
 
 import traceback
 
-# AKShare 财务指标中文名 → 内部字段映射
-KEY_MAP = {
+# THS字段名 → 内部字段映射
+THS_KEY_MAP = {
     '营业总收入': 'revenue',
-    '归母净利润': 'net_profit',
-    '营业收入': 'revenue',
+    '净利润': 'net_profit',
     '基本每股收益': 'eps',
-    '每股收益': 'eps',
-    '净资产收益率(ROE)': 'roe',
-    'ROE': 'roe',
-    '毛利率': 'gross_margin',
+    '销售毛利率': 'gross_margin',
     '销售净利率': 'net_margin',
-    '经营现金流量净额': 'operating_cf',
-    '股东权益合计(净资产)': 'equity',
+    '净资产收益率': 'roe',
+    '每股经营现金流': 'operating_cf',
+    '每股净资产': 'equity',
 }
 
 
+def _parse_ths_value(val_str):
+    """解析THS返回值: '12.36亿' → 1236000000, '20.50%' → 20.50, '2.0500' → 2.05"""
+    import math
+    if val_str is None or val_str == '':
+        return None
+    if isinstance(val_str, float) and math.isnan(val_str):
+        return None
+    s = str(val_str).strip()
+    if s == 'False' or s == '':
+        return None
+    try:
+        num = float(s.replace('亿', '').replace('%', '').replace(',', ''))
+        if '亿' in s:
+            num *= 1e8
+        return num
+    except (ValueError, TypeError):
+        return None
+
+
 def fetch_financials(code):
-    """使用AKShare获取财务数据"""
+    """使用AKShare(同花顺)获取财务数据 — Sina接口不稳定故改用THS"""
     try:
         import akshare as ak
-        df = ak.stock_financial_abstract(symbol=code)
+        import pandas as pd
+
+        # 先尝试年报数据，没有则用报告期
+        df = None
+        for indicator in ['按年度', '按报告期']:
+            try:
+                df = ak.stock_financial_abstract_ths(symbol=code, indicator=indicator)
+                if df is not None and not df.empty:
+                    break
+            except Exception:
+                continue
+
         if df is None or df.empty:
             return None
 
-        # 提取日期列（所有以数字开头的列，如 20260331）
-        date_cols = [c for c in df.columns if c.replace('-', '').isdigit()]
-        if not date_cols:
-            return None
-        
-        # 最新日期
-        latest_date = sorted(date_cols, reverse=True)[0]
-        
-        # 解析数据
+        # 按报告期排序，取最新一条
+        df = df.sort_values('报告期', ascending=False).reset_index(drop=True)
+
+        latest = df.iloc[0]
+        report_date_raw = str(latest['报告期'])[:10]  # '2011-12-31' or '2011'
         result = {
             'code': code,
-            'report_date': latest_date[:4] + '-' + latest_date[4:6] + '-' + latest_date[6:8] if len(latest_date) == 8 else latest_date,
-            'report_type': '年报' if latest_date[4:6] == '12' else ('中报' if latest_date[4:6] == '06' else ('一季报' if latest_date[4:6] == '03' else '三季报')),
         }
 
-        # 提取最新一期和前三期的数据
-        period_dates = sorted(date_cols, reverse=True)[:8]
-        periods = []
-        for d in period_dates:
-            rd = d[:4] + '-' + d[4:6] + '-' + d[6:8] if len(d) == 8 else d
-            rt = '年报' if d[4:6] == '12' else ('中报' if d[4:6] == '06' else ('一季报' if d[4:6] == '03' else '三季报'))
-            pdict = {'report_date': rd, 'report_type': rt}
-            periods.append(pdict)
-        
-        result['periods'] = periods
-        
-        # 遍历每一行，提取指标值
-        for _, row in df.iterrows():
-            indicator_name = str(row.get('指标', '')).strip()
-            eng_key = KEY_MAP.get(indicator_name)
-            if eng_key is None:
-                continue
-            
-            # 取最新一期
-            val = row.get(latest_date)
-            if val is not None and val != '':
-                try:
-                    result[eng_key] = float(val)
-                except (ValueError, TypeError):
-                    pass
-            
-            # 填充到各 period
-            for i, d in enumerate(period_dates):
-                if i < len(result['periods']):
-                    v = row.get(d)
-                    if v is not None and v != '':
-                        try:
-                            result['periods'][i][eng_key] = float(v)
-                        except (ValueError, TypeError):
-                            pass
+        # 解析report_date
+        if '-' in report_date_raw:
+            result['report_date'] = report_date_raw
+            m = report_date_raw[5:7]
+        else:
+            # 年度格式 '2011'
+            result['report_date'] = report_date_raw + '-12-31'
+            m = '12'
 
-        # 判断是否有数据
+        result['report_type'] = {
+            '12': '年报', '06': '中报', '03': '一季报', '09': '三季报'
+        }.get(m, '年报')
+
+        # 提取最新一期指标
+        for ths_name, eng_key in THS_KEY_MAP.items():
+            val = _parse_ths_value(latest.get(ths_name))
+            if val is not None:
+                result[eng_key] = val
+
+        # 提取多期数据（最近8期）
+        periods = []
+        for _, row in df.head(8).iterrows():
+            rd = str(row['报告期'])[:10]
+            if '-' not in rd:
+                rd = rd + '-12-31'
+            m = rd[5:7]
+            rt = {'12': '年报', '06': '中报', '03': '一季报', '09': '三季报'}.get(m, '年报')
+            pdict = {'report_date': rd, 'report_type': rt}
+            for ths_name, eng_key in THS_KEY_MAP.items():
+                v = _parse_ths_value(row.get(ths_name))
+                if v is not None:
+                    pdict[eng_key] = v
+            periods.append(pdict)
+
+        result['periods'] = periods
+
         if 'revenue' not in result and 'net_profit' not in result:
             return None
-            
+
         return result
     except Exception as e:
         print(f"[Fundamental] fetch_financials failed for {code}: {e}")
@@ -91,32 +111,20 @@ def fetch_financials(code):
 
 
 def get_valuation(code):
-    """获取估值数据 PE/PB"""
+    """获取估值数据 PE/PB — 使用 Baidu PB（PE需交易时段从实时行情获取）"""
     try:
         import akshare as ak
-        df = ak.stock_financial_analysis_indicator(symbol=code)
-        if df is None or df.empty:
-            return None
-        
-        date_cols = [c for c in df.columns if c.replace('-', '').isdigit()]
-        if not date_cols:
-            return None
-        
-        latest_date = sorted(date_cols, reverse=True)[0]
         result = {}
-        
-        for _, row in df.iterrows():
-            name = str(row.get('指标', '')).strip()
-            val = row.get(latest_date)
-            if val is not None and val != '':
-                try:
-                    if '市盈率' in name and 'pe' not in result:
-                        result['pe_ttm'] = float(val)
-                    elif '市净率' in name and 'pb' not in result:
-                        result['pb'] = float(val)
-                except (ValueError, TypeError):
-                    pass
-        
+
+        # 1. 从 Baidu 获取 PB（已验证稳定可用）
+        try:
+            pb_df = ak.stock_zh_valuation_baidu(symbol=code, indicator='市净率')
+            if pb_df is not None and not pb_df.empty:
+                latest_pb = pb_df['value'].iloc[-1]
+                result['pb'] = float(latest_pb)
+        except Exception:
+            pass
+
         return result if result else None
     except Exception as e:
         print(f"[Fundamental] get_valuation failed for {code}: {e}")

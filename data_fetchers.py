@@ -486,6 +486,47 @@ def get_daily_kline(code, count=240):
             # 截取需要的数量
             if len(df) > count:
                 df = df.tail(count).reset_index(drop=True)
+            
+            # 检查最新日期是否包含今天 — 如果没有, 尝试补充
+            try:
+                from datetime import date
+                today_str = date.today().isoformat()
+                latest_date = str(df['date'].iloc[-1])[:10] if len(df) > 0 else ''
+                if latest_date < today_str:
+                    # 优先尝试腾讯API (实时数据, 24h可用)
+                    try:
+                        prefix = 'sh' if str(code).startswith('6') else 'sz'
+                        import urllib.request as _ur
+                        turl = f'http://qt.gtimg.cn/q={prefix}{code}'
+                        tdata = _ur.urlopen(turl, timeout=5).read().decode('gbk', errors='replace')
+                        parts = tdata.split('~')
+                        if len(parts) > 38 and parts[3] != '0.00':
+                            price = float(parts[3])
+                            yclose = float(parts[4])
+                            open_p = float(parts[5])
+                            high = float(parts[33])
+                            low = float(parts[34])
+                            vol = int(parts[6]) * 100
+                            amount = float(parts[37]) * 10000
+                            date_field = parts[30][:8] if len(parts) > 30 else ''
+                            t_date = f'{date_field[:4]}-{date_field[4:6]}-{date_field[6:8]}' if len(date_field)==8 else today_str
+                            if t_date > latest_date:
+                                new_row = pd.DataFrame([{'date': t_date, 'open': open_p, 'high': high, 'low': low, 'close': price, 'volume': vol}])
+                                df = pd.concat([df, new_row], ignore_index=True)
+                                # 写入DB
+                                try:
+                                    db2 = SessionLocal()
+                                    db2.execute(db2.text(
+                                        "INSERT OR REPLACE INTO backtest_data (code, date, open, high, low, close, volume, amount) VALUES (:c, :d, :o, :h, :l, :cl, :v, :a)"),
+                                        {'c': code, 'd': t_date, 'o': open_p, 'h': high, 'l': low, 'cl': price, 'v': vol, 'a': amount})
+                                    db2.commit(); db2.close()
+                                except: pass
+                                print(f"[BacktestCache] 腾讯API补充 {code}: {t_date}")
+                    except Exception:
+                        pass  # 腾讯失败不阻塞
+            except Exception:
+                pass  # 今日补充整体失败不阻塞
+            
             print(f"[BacktestCache] 命中 {code}: {len(df)} 条 (含换手率)")
             return df
     except Exception:
@@ -544,7 +585,7 @@ def get_daily_kline(code, count=240):
                 if 'date' in df.columns:
                     df = df.sort_values('date').reset_index(drop=True)
                 
-                # 写入缓存
+                # 写入 kline_cache 和 backtest_data
                 try:
                     records = []
                     for _, row in df.iterrows():
@@ -562,6 +603,7 @@ def get_daily_kline(code, count=240):
                             'volume': float(row.get('volume', 0)),
                             'amount': float(row.get('amount', 0)) if 'amount' in row else 0,
                         })
+                    # 写入 kline_cache
                     db2 = SessionLocal()
                     try:
                         from db import save_kline_cache_batch
@@ -569,6 +611,19 @@ def get_daily_kline(code, count=240):
                         print(f"[KlineCache] 缓存 {code}: {saved} 条")
                     finally:
                         db2.close()
+                    # 同时写入 backtest_data
+                    try:
+                        db3 = SessionLocal()
+                        from db import get_backtest_data
+                        existing = get_backtest_data(db3, code)
+                        existing_dates = {r['date'] for r in existing} if existing else set()
+                        new_records = [r for r in records if r['date'] not in existing_dates]
+                        if new_records:
+                            from db import save_kline_cache_batch
+                            save_kline_cache_batch(db3, code, new_records)
+                        db3.close()
+                    except:
+                        pass
                 except Exception as ce:
                     print(f"[KlineCache] 写入缓存失败: {ce}")
                 

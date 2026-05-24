@@ -469,6 +469,18 @@ class StockAPI {
     return data;
   }
 
+  // ═══════════ 主线预判 API ═══════════
+  async getSectorPrediction(date?: string, all?: boolean): Promise<any> {
+    const params = new URLSearchParams();
+    if (date) params.append('date', date);
+    if (all) params.append('all', 'true');
+    return this.request(`/api/sector-prediction?${params.toString()}`);
+  }
+
+  async runSectorPrediction(): Promise<any> {
+    return this.request('/api/sector-prediction/run', { method: 'POST' });
+  }
+
   // ═══════════ 预测 API ═══════════
 
   async runForecast(payload: {

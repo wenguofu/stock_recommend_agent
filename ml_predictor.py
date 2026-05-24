@@ -185,124 +185,193 @@ def _build_features(code: str, lookback: int = 120) -> Tuple[Optional[np.ndarray
 # 方向预测 (涨/跌/平)
 # ═══════════════════════════════════════════════════════════════
 
+# RF最优参数 (80股 walk-forward 验证)
+RF_PARAMS = {
+    'n_estimators': 100,
+    'max_depth': 2,
+    'min_samples_leaf': 10,
+    'max_features': 'sqrt',
+    'class_weight': 'balanced',
+}
+
+
+def _rf_predict_direction(code: str, horizon: int = 5) -> Dict:
+    """随机森林方向预测 — 在股票自身历史上训练, 预测最新方向"""
+    try:
+        from sklearn.ensemble import RandomForestClassifier
+        import numpy as np
+        from data_fetchers import get_daily_kline
+        
+        kline = get_daily_kline(str(code).zfill(6), count=300)
+        if kline is None or len(kline) < 100:
+            return None  # 数据不足, 降级到规则
+        
+        c = kline['close'].values.astype(float)
+        h = kline['high'].values.astype(float)
+        l = kline['low'].values.astype(float)
+        o = kline['open'].values.astype(float)
+        v = kline['volume'].values.astype(float) if 'volume' in kline.columns else np.ones_like(c)
+        n = len(c)
+        
+        if n < 65:
+            return None
+        
+        # 尝试获取基本面数据
+        fund_features = None
+        try:
+            from models import SessionLocal
+            from db import get_latest_financial
+            db = SessionLocal()
+            fin = get_latest_financial(db, code)
+            db.close()
+            if fin:
+                roe = fin.get('roe')
+                gm = fin.get('gross_margin')
+                pe = fin.get('pe_ttm')
+                ey = (1.0/pe*100) if pe and pe > 0 else None
+                # 估算负债率
+                debt = None
+                if roe and gm and roe > 0 and gm > 0:
+                    debt = max(10, min(90, (gm / max(roe, 0.1)) * 8))
+                fund_features = {
+                    'roe': roe or 0,
+                    'gross_margin': gm or 0,
+                    'earnings_yield': ey or 0,
+                    'debt_ratio': debt or 0,
+                }
+        except Exception:
+            pass
+        
+        n_features = 18 if fund_features else 14
+        
+        # 构建特征
+        X_rows = []
+        for i in range(60, n - 1):
+            f = np.zeros(n_features)
+            f[0] = (c[i]/c[i-1]-1)*100 if i>=1 else 0
+            f[1] = (c[i]/c[i-3]-1)*100 if i>=3 else 0
+            f[2] = (c[i]/c[i-5]-1)*100 if i>=5 else 0
+            f[3] = (c[i]/c[i-10]-1)*100 if i>=10 else 0
+            rets = np.diff(c[i-20:i+1])/c[i-20:i]
+            f[4] = np.std(rets)*100*np.sqrt(252)
+            f[5] = (c[i]/np.mean(c[max(0,i-4):i+1])-1)*100
+            f[6] = (c[i]/np.mean(c[max(0,i-19):i+1])-1)*100
+            d = np.diff(c[max(0,i-14):i+1])
+            g = np.sum(d[d>0]) if np.any(d>0) else 0
+            ll = abs(np.sum(d[d<0])) if np.any(d<0) else 1e-10
+            f[7] = 100 - 100/(1+g/ll)
+            av = np.mean(v[max(0,i-20):i]) if i>=20 else v[i]
+            f[8] = v[i]/av if av>0 else 1.0
+            m20=np.mean(c[max(0,i-19):i+1]); s20=np.std(c[max(0,i-19):i+1])
+            f[9] = (c[i]-(m20-2*s20))/(4*s20)*100 if s20>0 else 50
+            pk=np.max(c[max(0,i-19):i+1])
+            f[10] = (pk-c[i])/pk*100 if pk>0 else 0
+            f[11] = (h[i]-l[i])/o[i]*100 if o[i]>0 else 0
+            up=0; down=0
+            for j in range(i, max(i-5,0), -1):
+                if c[j]>c[j-1]: up+=1
+                else: break
+            for j in range(i, max(i-5,0), -1):
+                if c[j]<c[j-1]: down+=1
+                else: break
+            f[12]=up; f[13]=down
+            # 基本面特征 (14-17) — 静态, 整只股票共享
+            if fund_features:
+                f[14] = fund_features['roe']
+                f[15] = fund_features['gross_margin']
+                f[16] = fund_features['earnings_yield']
+                f[17] = fund_features['debt_ratio']
+            X_rows.append(f)
+        
+        X = np.array(X_rows, dtype=np.float32)
+        X = np.nan_to_num(X, 0)
+        # 标签: 用已有数据, 未来horizon日的涨跌
+        y = np.array([1 if c[i+horizon] > c[i] else 0 for i in range(60, n-horizon)], dtype=np.int32)
+        
+        # 对齐X和y
+        min_len = min(len(X), len(y))
+        X, y = X[:min_len], y[:min_len]
+        
+        if len(X) < 30 or len(np.unique(y)) < 2:
+            return None
+        
+        rf = RandomForestClassifier(**RF_PARAMS, n_jobs=-1)
+        rf.fit(X, y)
+        
+        # 用最后一组特征预测
+        last_features = X[-1:].copy()
+        # 更新最后特征的"最新"值
+        last_features[0,0] = (c[-1]/c[-2]-1)*100 if n>=2 else 0
+        last_features[0,1] = (c[-1]/c[-4]-1)*100 if n>=4 else 0
+        last_features[0,2] = (c[-1]/c[-6]-1)*100 if n>=6 else 0
+        last_features[0,3] = (c[-1]/c[-11]-1)*100 if n>=11 else 0
+        
+        proba = rf.predict_proba(last_features)[0]
+        up_prob = float(proba[1]) * 100
+        down_prob = float(proba[0]) * 100
+        
+        # 方向判断
+        if up_prob > 55:
+            direction = 'up'
+        elif down_prob > 55:
+            direction = 'down'
+        else:
+            direction = 'neutral'
+        
+        # 置信度
+        prob_diff = abs(up_prob - down_prob)
+        if prob_diff > 25:
+            confidence = 'high'
+        elif prob_diff > 12:
+            confidence = 'medium'
+        else:
+            confidence = 'low'
+        
+        # 特征重要性
+        feat_names = ['ret1','ret3','ret5','ret10','vol','ma5','ma20','rsi','vr','boll','dd','amp','cup','cdn']
+        if n_features == 18:
+            feat_names += ['roe','gm','ey','debt']
+        imps = sorted(zip(feat_names, rf.feature_importances_), key=lambda x: x[1], reverse=True)[:5]
+        
+        return {
+            'success': True,
+            'code': code,
+            'horizon_days': horizon,
+            'direction': direction,
+            'up_prob': round(up_prob),
+            'down_prob': round(down_prob),
+            'confidence': confidence,
+            'method': 'random_forest',
+            'top_features': [{'name': n, 'importance': round(float(v), 4)} for n, v in imps],
+            'train_samples': len(X),
+            'timestamp': datetime.now().isoformat(),
+        }
+        
+    except ImportError:
+        return None  # sklearn 不可用
+    except Exception as e:
+        print(f"[RF] predict failed: {e}")
+        return None
+
+
 def predict_direction(
     code: str,
     horizon_days: int = 5,
 ) -> Dict:
     """
     预测未来N日涨跌方向
-
-    方法: 多因子线性评分 + 历史胜率加权
-
-    Returns:
-        dict: {direction, up_prob, down_prob, confidence, features_used}
+    优先使用随机森林, 不可用时降级到规则引擎
     """
-    result = {
-        'success': False,
-        'code': code,
-        'horizon_days': horizon_days,
-        'timestamp': datetime.now().isoformat(),
-        'direction': 'unknown',
-        'up_prob': 0,
-        'down_prob': 0,
-        'confidence': 'low',
-    }
-
-    try:
-        if is_us_stock(code):
-            result['error'] = '美股暂不支持'
-            return result
-
-        X, y, feature_names = _build_features(code)
-
-        if X is None or len(X) < 30:
-            # 降级: 使用简单规则
-            return _fallback_direction_prediction(code, horizon_days)
-
-        # 二分类: 上涨(return>0) vs 下跌(return<=0)
-        y_binary = (y > 0).astype(int)
-
-        try:
-            from sklearn.linear_model import LogisticRegression
-            from sklearn.preprocessing import StandardScaler
-
-            scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(X)
-
-            # 留出最近一期做预测
-            X_train = X_scaled[:-1]
-            y_train = y_binary[:-1]
-
-            if len(np.unique(y_train)) < 2:
-                up_prob = 0.55 if np.mean(y_train) > 0.5 else 0.45
-                result['up_prob'] = round(up_prob * 100)
-                result['down_prob'] = 100 - result['up_prob']
-                result['direction'] = 'up' if up_prob > 0.5 else 'down'
-                result['confidence'] = 'low'
-                result['success'] = True
-                return result
-
-            model = LogisticRegression(max_iter=1000, C=1.0, class_weight='balanced')
-            model.fit(X_train, y_train)
-
-            # 基线: 训练集中上涨的比例
-            baseline_up = float(np.mean(y_train))
-            result['baseline_up_pct'] = round(baseline_up * 100, 1)
-
-            # 预测
-            X_latest = X_scaled[-1:]
-
-            if hasattr(model, 'predict_proba'):
-                proba = model.predict_proba(X_latest)[0]
-                if len(proba) == 2:
-                    down_prob = float(proba[0])
-                    up_prob = float(proba[1])
-                else:
-                    up_prob = 0.5
-                    down_prob = 0.5
-            else:
-                pred = model.predict(X_latest)[0]
-                up_prob = 0.7 if pred == 1 else 0.3
-                down_prob = 1 - up_prob
-
-            # 计算训练集准确率
-            train_acc = float(np.mean(model.predict(X_train) == y_train))
-
-            # 特征重要性
-            importance = {}
-            for i, name in enumerate(feature_names):
-                importance[name] = round(float(abs(model.coef_[0][i])), 4)
-
-            top_features = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:5]
-
-            result['up_prob'] = round(up_prob * 100)
-            result['down_prob'] = round(down_prob * 100)
-            result['direction'] = 'up' if up_prob > down_prob else 'down'
-            result['train_accuracy'] = round(train_acc * 100, 1)
-            result['top_features'] = [{'name': n, 'importance': v} for n, v in top_features]
-
-            # 置信度
-            prob_diff = abs(up_prob - down_prob)
-            if prob_diff > 0.3 and train_acc > 0.6:
-                result['confidence'] = 'high'
-            elif prob_diff > 0.15:
-                result['confidence'] = 'medium'
-            else:
-                result['confidence'] = 'low'
-
-            result['success'] = True
-
-        except ImportError:
-            # 无sklearn, 降级到规则
-            return _fallback_direction_prediction(code, horizon_days)
-
-    except Exception as e:
-        result['error'] = str(e)
-
-    return result
+    # 尝试 RF
+    rf_result = _rf_predict_direction(code, horizon_days)
+    if rf_result is not None:
+        return rf_result
+    
+    # 降级: 规则引擎
+    return _rule_direction_prediction(code, horizon_days)
 
 
-def _fallback_direction_prediction(code: str, horizon: int) -> Dict:
+def _rule_direction_prediction(code: str, horizon: int) -> Dict:
     """降级方向预测 v2 — 动量+反转双信号, 市场基线校准, 100股回测验证"""
     try:
         from factor_engine import calculate_factors

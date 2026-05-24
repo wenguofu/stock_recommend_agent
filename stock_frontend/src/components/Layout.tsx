@@ -16,8 +16,9 @@ export default function Layout({ children }: LayoutProps) {
     { path: '/recommendations', label: '股票推荐' },
     { path: '/tasks', label: '任务' },
     { path: '/strategies', label: '策略库' },
-    { path: '/strategy', label: '强势股' },
+    { path: '/strategy', label: '策略推荐' },
     { path: '/backtest', label: '回测' },
+    { path: '/sector-prediction', label: '🔮主线预判' },
     { path: '/settings', label: '配置' },
   ];
 
