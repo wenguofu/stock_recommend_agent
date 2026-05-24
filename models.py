@@ -363,6 +363,31 @@ class PortfolioConfig(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
+class TradeJournal(Base):
+    """中长线交易日志表"""
+    __tablename__ = 'trade_journal'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False)
+    name = Column(String(50))
+    direction = Column(String(10), default='long')  # long/short
+    entry_date = Column(String(10))
+    entry_price = Column(Float)
+    shares = Column(Integer)
+    stop_loss = Column(Float)
+    target_price = Column(Float)
+    exit_date = Column(String(10))
+    exit_price = Column(Float)
+    pnl = Column(Float)
+    pnl_pct = Column(Float)
+    reason_entry = Column(Text)
+    reason_exit = Column(Text)
+    notes = Column(Text)
+    tags = Column(String(100))
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
 # 数据库初始化
 DB_PATH = os.path.join(os.path.dirname(__file__), 'database.db')
 engine = create_engine(f'sqlite:///{DB_PATH}', echo=False)

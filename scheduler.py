@@ -15,7 +15,10 @@ import time
 import logging
 import threading
 import subprocess
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
+
+# 共享配置
+from config import API_BASE
 
 logger = logging.getLogger('scheduler')
 
@@ -111,7 +114,7 @@ def task_update_sectors():
     """板块成分股每日更新 - 9:00"""
     import urllib.request
     try:
-        req = urllib.request.urlopen("http://127.0.0.1:35000/api/sectors/update", timeout=60)
+        req = urllib.request.urlopen(f"{API_BASE}/api/sectors/update", timeout=60)
         data = json.loads(req.read())
         if data.get("success"):
             sector_count = len(data.get("sectors", data.get("data", [])))
@@ -158,7 +161,7 @@ def task_generate_recommendations():
     import urllib.request
     data = json.dumps({"type": "daily", "strategies": ["youzi", "lianghua", "jichang"], "top_n": 10}).encode()
     req = urllib.request.Request(
-        "http://127.0.0.1:35000/api/recommendations/generate",
+        f"{API_BASE}/api/recommendations/generate",
         data=data, headers={"Content-Type": "application/json"},
         method="POST"
     )
@@ -249,7 +252,7 @@ TASKS = [
         'last_output': '',
         'last_error': '',
     },
-    # 定时任务（cron 模式）
+    # ── 定时任务（cron 模式）──
     {
         'name': '板块成分股每日更新',
         'func': task_update_sectors,
@@ -286,17 +289,6 @@ TASKS = [
     {
         'name': '板块盘后交叉分析',
         'func': task_sector_analysis,
-        'type': 'cron',
-        'cron': '30 15 * * 1-5',
-        'last_date': '',
-        'last_run': 0,
-        'run_count': 0,
-        'last_output': '',
-        'last_error': '',
-    },
-    {
-        'name': '全A股收盘后刷新',
-        'func': task_eod_prefetch,
         'type': 'cron',
         'cron': '30 15 * * 1-5',
         'last_date': '',
@@ -484,8 +476,12 @@ class TaskScheduler:
             parts = task['cron'].split()
             if len(parts) != 5:
                 continue
-            cron_hour = int(parts[1])
-            cron_min = int(parts[0])
+            try:
+                cron_hour = int(parts[1])
+                cron_min = int(parts[0])
+            except ValueError:
+                # 范围/步进表达式 (如 9-15, */30) 无法判断"是否错过" → 跳过补跑
+                continue
             # 当前时间已过cron时间点，且今天还没跑过
             if now.hour > cron_hour or (now.hour == cron_hour and now.minute >= cron_min):
                 # 但也要检查时间段限制（交易时段/收盘后）

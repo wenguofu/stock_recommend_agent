@@ -16,6 +16,7 @@ import PaperBreakdown from './pages/PaperBreakdown';
 import Recommendations from './pages/Recommendations';
 import BacktestPage from './pages/BacktestPage';
 import SectorPrediction from './pages/SectorPrediction';
+import Midline from './pages/Midline';
 import Layout from './components/Layout';
 import './index.css';
 
@@ -51,6 +52,7 @@ function App() {
             <Route path="/recommendations" element={<Recommendations />} />
             <Route path="/backtest" element={<BacktestPage />} />
             <Route path="/sector-prediction" element={<SectorPrediction />} />
+            <Route path="/midline" element={<Midline />} />
           </Routes>
         </Layout>
       </BrowserRouter>

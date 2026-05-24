@@ -3,6 +3,9 @@ import { useQuery } from '@tanstack/react-query';
 import { stockAPI } from '../services/api';
 import CandlestickChart from '../components/charts/CandlestickChart';
 import AIAnalyzeButton from '../components/AIAnalyzeButton';
+import MoneyFlowPanel from '../components/MoneyFlowPanel';
+import RiskPanel from '../components/RiskPanel';
+import MLPredictPanel from '../components/MLPredictPanel';
 import { useState, useEffect } from 'react';
 
 // 现代化的加载动画组件
@@ -238,111 +241,7 @@ export default function StockDetail() {
       )}
 
       {/* 风险指标卡片 */}
-      {riskData && riskData.risk_grade && riskData.risk_grade !== 'data_insufficient' && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border-l-4 border-orange-500">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
-            ⚠️ 风险指标
-            <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
-              riskData.risk_grade === '低风险' ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' :
-              riskData.risk_grade === '中等风险' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300' :
-              riskData.risk_grade === '高风险' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300' :
-              'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'
-            }`}>
-              {riskData.risk_grade}
-            </span>
-          </h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">VaR (95%/日)</div>
-              <div className="font-semibold text-gray-900 dark:text-white">
-                {riskData.var_95?.var_pct != null ? `${riskData.var_95.var_pct}%` : 'N/A'}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">最大回撤</div>
-              <div className="font-semibold text-gray-900 dark:text-white">
-                {riskData.max_drawdown?.max_drawdown_pct != null ? `${riskData.max_drawdown.max_drawdown_pct}%` : 'N/A'}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">年化波动率</div>
-              <div className="font-semibold text-gray-900 dark:text-white">
-                {riskData.volatility?.annual_pct != null ? `${riskData.volatility.annual_pct}%` : 'N/A'}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">夏普比率</div>
-              <div className={`font-semibold ${
-                (riskData.sharpe?.sharpe_ratio ?? 0) >= 1 ? 'text-green-600' :
-                (riskData.sharpe?.sharpe_ratio ?? 0) >= 0 ? 'text-yellow-600' :
-                'text-red-600'
-              }`}>
-                {riskData.sharpe?.sharpe_ratio != null ? riskData.sharpe.sharpe_ratio.toFixed(2) : 'N/A'}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">建议仓位(半凯利)</div>
-              <div className="font-semibold text-gray-900 dark:text-white">
-                {riskData.kelly_position?.fractional_pct != null ? `${riskData.kelly_position.fractional_pct}%` : 'N/A'}
-                {riskData.kelly_position?.risk_level && (
-                  <span className="text-xs text-gray-400 ml-1">({riskData.kelly_position.risk_level})</span>
-                )}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">ATR止损价</div>
-              <div className="font-semibold text-red-500">
-                {riskData.atr_stop_loss?.stop_loss_price != null ? `¥${riskData.atr_stop_loss.stop_loss_price}` : 'N/A'}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">最大单日跌幅</div>
-              <div className="font-semibold text-red-500">
-                {riskData.max_1d_loss_pct != null ? `${riskData.max_1d_loss_pct}%` : 'N/A'}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">CVaR (95%)</div>
-              <div className="font-semibold text-gray-900 dark:text-white">
-                {riskData.cvar_95?.cvar_pct != null ? `${riskData.cvar_95.cvar_pct}%` : 'N/A'}
-              </div>
-            </div>
-          </div>
-          {/* 持仓风险分析 */}
-          {riskData.position_analysis && (
-            <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-              <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">持仓风险评估</div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                <div>
-                  <span className="text-gray-500 dark:text-gray-400">95%VaR最大损失:</span>{' '}
-                  <span className="font-semibold text-red-500">
-                    ¥{riskData.position_analysis.var_95_max_loss?.toFixed(0) || 'N/A'}
-                  </span>
-                </div>
-                {riskData.position_analysis.suggested_stop_loss && (
-                  <div>
-                    <span className="text-gray-500 dark:text-gray-400">建议止损:</span>{' '}
-                    <span className="font-semibold text-red-500">
-                      ¥{riskData.position_analysis.suggested_stop_loss}
-                    </span>
-                    <span className="text-xs text-gray-400 ml-1">
-                      (-{riskData.position_analysis.stop_loss_pct}%)
-                    </span>
-                  </div>
-                )}
-                {riskData.position_analysis.kelly_suggested_pct && (
-                  <div>
-                    <span className="text-gray-500 dark:text-gray-400">凯利建议仓位:</span>{' '}
-                    <span className="font-semibold text-blue-500">
-                      {riskData.position_analysis.kelly_suggested_pct}%
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      <RiskPanel riskData={riskData} />
 
       {/* 实时行情卡片 */}
       {realtimeLoading && comprehensiveLoading ? (
@@ -502,66 +401,7 @@ export default function StockDetail() {
       )}
 
       {/* ML预测卡片 */}
-      {mlData && mlData.success && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border-l-4 border-purple-500">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
-            🤖 ML预测 (未来{mlData.horizon_days}日)
-            <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
-              mlData.confidence === 'high' ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' :
-              mlData.confidence === 'medium' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300' :
-              'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
-            }`}>
-              置信度: {mlData.confidence === 'high' ? '高' : mlData.confidence === 'medium' ? '中' : '低'}
-            </span>
-          </h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">预测方向</div>
-              <div className={`font-bold text-lg ${
-                mlData.direction === 'up' ? 'text-red-500' :
-                mlData.direction === 'down' ? 'text-green-500' :
-                'text-gray-500'
-              }`}>
-                {mlData.direction === 'up' ? '📈 看涨' :
-                 mlData.direction === 'down' ? '📉 看跌' :
-                 '➡️ 中性'}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">上涨概率</div>
-              <div className="font-semibold text-red-500">
-                {mlData.up_prob}%
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">预测收益率</div>
-              <div className={`font-semibold ${
-                (mlData.predicted_return_pct ?? 0) >= 0 ? 'text-red-500' : 'text-green-500'
-              }`}>
-                {mlData.predicted_return_pct != null ? `${mlData.predicted_return_pct > 0 ? '+' : ''}${mlData.predicted_return_pct}%` : 'N/A'}
-              </div>
-            </div>
-            {mlData.return_range && (
-              <div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">95%置信区间</div>
-                <div className="font-semibold text-gray-900 dark:text-white text-xs">
-                  {mlData.return_range}
-                </div>
-              </div>
-            )}
-          </div>
-          {mlData.key_factors && mlData.key_factors.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-              <span className="text-xs text-gray-500 dark:text-gray-400">关键驱动因子: </span>
-              {mlData.key_factors.map((f: string, i: number) => (
-                <span key={f} className="text-xs text-purple-600 dark:text-purple-400 ml-1">
-                  {f}{i < mlData.key_factors.length - 1 ? ',' : ''}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      <MLPredictPanel mlData={mlData} />
 
       {/* 建议操作 - 基于最新分析报告 */}
       {latestReport && (() => {
@@ -960,93 +800,7 @@ export default function StockDetail() {
       )}
 
       {/* 今日资金流向 */}
-      {comprehensiveData?.money_flow && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">今日资金流向</h2>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {comprehensiveData.money_flow.main_net_inflow != null && (
-              <div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">主力净流入</div>
-                <div className={`text-lg font-semibold ${
-                  comprehensiveData.money_flow.main_net_inflow >= 0
-                    ? 'text-red-600 dark:text-red-400'
-                    : 'text-green-600 dark:text-green-400'
-                }`}>
-                  {comprehensiveData.money_flow.main_net_inflow >= 0 ? '+' : ''}
-                  {comprehensiveData.money_flow.main_net_inflow.toFixed(2)}万
-                </div>
-                {comprehensiveData.money_flow.main_net_ratio && (
-                  <div className="text-xs text-gray-400 mt-1">
-                    占比: {comprehensiveData.money_flow.main_net_ratio.toFixed(2)}%
-                  </div>
-                )}
-              </div>
-            )}
-            {comprehensiveData.money_flow.super_large_net_inflow != null && (
-              <div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">超大单净流入</div>
-                <div className={`text-lg font-semibold ${
-                  comprehensiveData.money_flow.super_large_net_inflow >= 0
-                    ? 'text-red-600 dark:text-red-400'
-                    : 'text-green-600 dark:text-green-400'
-                }`}>
-                  {comprehensiveData.money_flow.super_large_net_inflow >= 0 ? '+' : ''}
-                  {comprehensiveData.money_flow.super_large_net_inflow.toFixed(2)}万
-                </div>
-                {comprehensiveData.money_flow.super_large_net_ratio && (
-                  <div className="text-xs text-gray-400 mt-1">
-                    占比: {comprehensiveData.money_flow.super_large_net_ratio.toFixed(2)}%
-                  </div>
-                )}
-              </div>
-            )}
-            {comprehensiveData.money_flow.large_net_inflow != null && (
-              <div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">大单净流入</div>
-                <div className={`text-lg font-semibold ${
-                  comprehensiveData.money_flow.large_net_inflow >= 0
-                    ? 'text-red-600 dark:text-red-400'
-                    : 'text-green-600 dark:text-green-400'
-                }`}>
-                  {comprehensiveData.money_flow.large_net_inflow >= 0 ? '+' : ''}
-                  {comprehensiveData.money_flow.large_net_inflow.toFixed(2)}万
-                </div>
-                {comprehensiveData.money_flow.large_net_ratio && (
-                  <div className="text-xs text-gray-400 mt-1">
-                    占比: {comprehensiveData.money_flow.large_net_ratio.toFixed(2)}%
-                  </div>
-                )}
-              </div>
-            )}
-            {comprehensiveData.money_flow.medium_net_inflow != null && (
-              <div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">中单净流入</div>
-                <div className={`text-lg font-semibold ${
-                  comprehensiveData.money_flow.medium_net_inflow >= 0
-                    ? 'text-red-600 dark:text-red-400'
-                    : 'text-green-600 dark:text-green-400'
-                }`}>
-                  {comprehensiveData.money_flow.medium_net_inflow >= 0 ? '+' : ''}
-                  {comprehensiveData.money_flow.medium_net_inflow.toFixed(2)}万
-                </div>
-              </div>
-            )}
-            {comprehensiveData.money_flow.small_net_inflow != null && (
-              <div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">小单净流入</div>
-                <div className={`text-lg font-semibold ${
-                  comprehensiveData.money_flow.small_net_inflow >= 0
-                    ? 'text-red-600 dark:text-red-400'
-                    : 'text-green-600 dark:text-green-400'
-                }`}>
-                  {comprehensiveData.money_flow.small_net_inflow >= 0 ? '+' : ''}
-                  {comprehensiveData.money_flow.small_net_inflow.toFixed(2)}万
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {comprehensiveData?.money_flow && <MoneyFlowPanel moneyFlow={comprehensiveData.money_flow} />}
 
       {/* 历史资金流向 */}
       {moneyFlowHistoryLoading ? (

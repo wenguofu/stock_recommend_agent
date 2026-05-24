@@ -16,7 +16,8 @@ import logging
 warnings.filterwarnings('ignore')
 
 # 配置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+from logging_config import setup_logging
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # 创建Flask应用
@@ -24,6 +25,10 @@ app = Flask(__name__, static_folder=None)
 CORS(app)
 
 app.config['JSON_AS_ASCII'] = False
+
+# ── 统一错误处理 ──
+from error_handler import register_error_handler
+register_error_handler(app)
 
 # ── 请求日志中间件 ──
 @app.before_request
@@ -83,6 +88,9 @@ def register_routes():
     # 注册因子+ML预测API
     from factor_routes import register_factor_routes
     register_factor_routes(app)
+    # 注册中长线交易API
+    from midline_routes import register_midline_routes
+    register_midline_routes(app)
 
 def init_database():
     """初始化数据库和默认配置"""
@@ -101,10 +109,13 @@ scheduler = start_scheduler()
 print(f"[调度器] 已启动，{len(scheduler.tasks)}个任务")
 
 if __name__ == '__main__':
+    import os
+    PORT = int(os.environ.get("API_PORT", 35000))
+    DEBUG = os.environ.get("FLASK_DEBUG", "0") == "1"
     print("=" * 60)
     print("股票数据API服务启动")
     print("=" * 60)
-    print("访问 http://localhost:35000 查看API文档")
+    print(f"访问 http://localhost:{PORT} 查看API文档")
     print("调度器运行中...")
     print("=" * 60)
-    app.run(host='0.0.0.0', port=35000, debug=True)
+    app.run(host='0.0.0.0', port=PORT, debug=DEBUG)

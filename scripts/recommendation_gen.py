@@ -3,6 +3,7 @@
 import sys, os, json, urllib.request
 
 sys.path.insert(0, '/Users/wgfu/work/a-stock-trading')
+from config import API_BASE
 from stock_screener import generate_recommendations
 
 # 判断今日
@@ -27,7 +28,7 @@ if is_monday and hour >= 15:
     # 保存到API
     data = json.dumps({"type": "weekly", "strategies": strategies, "top_n": 15}).encode()
     req = urllib.request.Request(
-        "http://127.0.0.1:35000/api/recommendations/generate",
+        f"{API_BASE}/api/recommendations/generate",
         data=data, headers={"Content-Type": "application/json"},
         method="POST"
     )
@@ -42,7 +43,7 @@ if is_monday and hour >= 15:
 # 每日推荐
 data = json.dumps({"type": "daily", "strategies": strategies, "top_n": 10}).encode()
 req = urllib.request.Request(
-    "http://127.0.0.1:35000/api/recommendations/generate",
+    f"{API_BASE}/api/recommendations/generate",
     data=data, headers={"Content-Type": "application/json"},
     method="POST"
 )

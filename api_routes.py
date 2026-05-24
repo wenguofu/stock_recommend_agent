@@ -1,6 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""API路由模块"""
+"""
+API路由模块
+
+⚠️  本文件 3898 行，需要逐步拆分。当前结构：
+  ── 行情 API ──          GET  /api/sina/realtime|daily|minute|money_flow|...
+  ── 自选股 / 配置 ──     /api/watchlist, /api/config
+  ── Agent 管理 ──        /api/agents
+  ── AI 辩论 / 分析 ──    /api/ai/debate|analyze  (→ 待提取至 debate_routes.py)
+  ── 策略推荐 / 回测 ──   /api/strategy, /api/backtest, /api/forecast
+  ── 模拟盘 ──           /api/paper/*  (部分已分离至 paper_trading.py)
+  ── 板块 / 调度器 ──     /api/sectors, /api/scheduler
+  ── 主线预判 ──          /api/sector-prediction
+
+已独立模块：strategy_routes.py, risk_routes.py, factor_routes.py
+待提取：debate routes (~200行), paper routes (~150行)
+"""
 
 from flask import jsonify, request
 import threading
@@ -27,6 +42,7 @@ from db import (
     get_latest_financial
 )
 from ai_service import AIService
+from ai_config import get_api_key
 from strategy_routes import register_strategy_routes
 from utils import is_valid_stock_code
 from task_scheduler import start_scheduler, _run_single_task, get_recent_alerts
@@ -1692,8 +1708,7 @@ def register_routes(app):
     
     @app.route('/api/ai/debate/<code>', methods=['POST'])
     def debate_stock_api(code):
-        """多Agent分析+辩论（含记录与最终报告）"""
-        db = next(get_db())
+        """多Agent分析+辩论（同步模式 — 后台执行+立即返回job_id，避免超时）"""
         try:
             code_str = str(code).strip()
             if not is_valid_stock_code(code_str):
@@ -1703,162 +1718,49 @@ def register_routes(app):
             agent_ids = data.get('agent_ids', [])
             analysis_rounds = int(data.get('analysis_rounds', 3))
             debate_rounds = int(data.get('debate_rounds', 3))
+            position = data.get('position', None)
 
             if not isinstance(agent_ids, list) or len(agent_ids) < 2:
                 return jsonify({'success': False, 'error': '至少需要选择2个Agent参与辩论'}), 400
 
-            # 获取Agent配置
-            agents = []
-            for agent_id in agent_ids:
-                agent = get_agent(db, agent_id)
-                if not agent or not agent.enabled:
-                    return jsonify({'success': False, 'error': f'Agent不存在或未启用: {agent_id}'}), 400
-                agents.append(agent)
+            # 生成job_id和任务名称
+            job_id = str(uuid.uuid4())
+            try:
+                realtime = get_realtime_data(code_str)
+                stock_name = realtime.get('name') if isinstance(realtime, dict) else None
+            except Exception:
+                stock_name = None
+            job_name = f"{stock_name or code_str} {datetime.now().strftime('%Y-%m-%d')}"
 
-            # 获取股票数据
-            print(f"[API] 获取股票数据（辩论）: {code_str}")
-            stock_data = get_comprehensive_data_with_indicators(code_str)
-            formatted_data = format_for_ai(stock_data)
+            db = next(get_db())
+            try:
+                meta = data.get('meta', {})
+                if position:
+                    meta['position'] = position
+                create_debate_job(db, job_id, code_str, job_name, agent_ids, analysis_rounds, debate_rounds, meta=meta)
+            finally:
+                db.close()
 
-            default_model_map = {
-                'openai': 'gpt-3.5-turbo',
-                'deepseek': 'deepseek-chat',
-                'qwen': 'qwen-turbo',
-                'gemini': 'gemini-pro',
-                'siliconflow': 'Qwen/Qwen2.5-7B-Instruct',
-                'grok': 'grok-4-0709'
-            }
-
-            def resolve_agent_config(agent):
-                provider = agent.ai_provider or get_config(db, 'default_ai_provider', 'openai')
-                api_key = get_config(db, f'{provider}_api_key')
-                if not api_key:
-                    raise ValueError(f'未配置{provider} API Key')
-                model = agent.model or get_config(db, f'{provider}_model', default_model_map.get(provider, 'gpt-3.5-turbo'))
-                return provider, api_key, model
-
-            steps = []
-            analysis_memory = {agent.id: [] for agent in agents}
-
-            # 获取当前时间
-            current_time = datetime.now()
-            current_time_str = current_time.strftime('%Y-%m-%d %H:%M:%S')
-            current_time_info = f"Current Time: {current_time_str} (Weekday: {current_time.strftime('%A')})"
-            
-            # 3轮分析
-            for round_idx in range(1, analysis_rounds + 1):
-                for agent in agents:
-                    provider, api_key, model = resolve_agent_config(agent)
-                    prev_analysis = "\n\n".join(analysis_memory[agent.id][-2:]) if analysis_memory[agent.id] else "None"
-                    prompt = (
-                        f"{agent.prompt}\n\n"
-                        f"{current_time_info}\n\n"
-                        f"Stock Data:\n{formatted_data}\n\n"
-                        f"Round {round_idx} Analysis:\n"
-                        f"Build on your previous analysis and provide new insights without repetition.\n\n"
-                        f"Previous Analysis (if any):\n{prev_analysis}\n\n"
-                        f"Please provide your analysis in Chinese."
-                    )
-                    result = AIService.call_agent(provider, api_key, model, prompt)
-                    analysis_memory[agent.id].append(result)
-                    steps.append({
-                        'phase': 'analysis',
-                        'round': round_idx,
-                        'agent_id': agent.id,
-                        'agent_name': agent.name,
-                        'content': result,
-                        'timestamp': datetime.now().isoformat()
-                    })
-
-            # 3轮辩论
-            debate_history = []
-            for round_idx in range(1, debate_rounds + 1):
-                # 获取当前时间（每轮辩论都更新）
-                current_time = datetime.now()
-                current_time_str = current_time.strftime('%Y-%m-%d %H:%M:%S')
-                current_time_info = f"Current Time: {current_time_str} (Weekday: {current_time.strftime('%A')})"
-                
-                for agent in agents:
-                    provider, api_key, model = resolve_agent_config(agent)
-                    other_latest = "\n\n".join([
-                        f"{a.name}:\n{analysis_memory[a.id][-1]}"
-                        for a in agents if a.id != agent.id and analysis_memory[a.id]
-                    ])
-                    recent_debate = "\n\n".join([
-                        f"Round {item['round']} - {item['agent_name']}:\n{item['content']}"
-                        for item in debate_history[-min(len(debate_history), len(agents) * 2):]
-                    ]) if debate_history else "None"
-
-                    prompt = (
-                        f"{agent.prompt}\n\n"
-                        f"{current_time_info}\n\n"
-                        f"{sector_context}\n\n"
-                        "You are participating in a multi-agent debate.\n\n"
-                        f"Debate Round {round_idx}:\n"
-                        "Respond with counterarguments, supporting evidence, and actionable insights.\n"
-                        "Focus on your unique perspective and address opposing viewpoints.\n\n"
-                        f"Other agents' latest analyses:\n{other_latest}\n\n"
-                        f"Recent Debate History:\n{recent_debate}\n\n"
-                        "Please provide your debate response in Chinese."
-                    )
-                    result = AIService.call_agent(provider, api_key, model, prompt)
-                    item = {
-                        'phase': 'debate',
-                        'round': round_idx,
-                        'agent_id': agent.id,
-                        'agent_name': agent.name,
-                        'content': result,
-                        'timestamp': datetime.now().isoformat()
-                    }
-                    debate_history.append(item)
-                    steps.append(item)
-
-            # 资深操作员记录与最终报告
-            operator_provider = get_config(db, 'default_ai_provider', 'openai')
-            operator_api_key = get_config(db, f'{operator_provider}_api_key')
-            if not operator_api_key:
-                return jsonify({'success': False, 'error': f'未配置{operator_provider} API Key'}), 400
-            operator_model = get_config(db, f'{operator_provider}_model', default_model_map.get(operator_provider, 'gpt-3.5-turbo'))
-
-            transcript = "\n\n".join([
-                f"[{item['phase']} R{item['round']}] {item['agent_name']}:\n{item['content']}"
-                for item in steps
-            ])
-
-            operator_prompt = (
-                "You are a senior trading operator and debate recorder.\n"
-                "Based on the multi-agent analysis and debate transcript, produce a final research report in Markdown.\n"
-                "The report must include sections: Overview, Key Points by Agent (ALL 12 agents must appear in table), Debate Summary, Risks, Final Recommendation.\n"
-                f"\n## Sector Context\n{sector_context}\n\n\n"
-                "Provide a clear trading operation suggestion in the Final Recommendation section.\n\n"
-                "AFTER the Final Recommendation section, add a section called '## 安全买入区间' with this table format:\n"
-                "| 买入场景 | 价格区间 | 条件 | 仓位建议 |\n"
-                "|---------|---------|------|---------|\n"
-                "| 激进买点 | xx.xx - xx.xx | 触发条件说明 | 仓位比例 |\n"
-                "| 稳健买点 | xx.xx - xx.xx | 触发条件说明 | 仓位比例 |\n"
-                "| 左侧买点 | xx.xx - xx.xx | 触发条件说明 | 仓位比例 |\n"
-                "If current price is too high and no safe buy zone exists, clearly state \"当前价格过高，暂无安全买入区间，建议观望等待回调\".\n"
-                f"Transcript:\n{transcript}\n\n"
-                "Please output the report in Chinese."
+            # 后台线程执行辩论（共享 _run_debate_job 路径）
+            thread = threading.Thread(
+                target=_run_debate_job,
+                args=(job_id, code_str, agent_ids, analysis_rounds, debate_rounds, position),
+                daemon=True
             )
-
-            report_md = AIService.call_agent(operator_provider, operator_api_key, operator_model, operator_prompt)
+            thread.start()
 
             return jsonify({
                 'success': True,
                 'data': {
-                    'steps': steps,
-                    'report_md': report_md,
-                    'analysis_rounds': analysis_rounds,
-                    'debate_rounds': debate_rounds
+                    'job_id': job_id,
+                    'name': job_name,
+                    'message': '辩论任务已后台提交，请使用 /api/ai/debate/job/<job_id> 轮询结果'
                 }
             })
         except Exception as e:
             error_msg = str(e)
-            print(f"[API] 辩论分析失败: {error_msg}")
+            print(f"[API] 提交辩论任务失败: {error_msg}")
             return jsonify({'success': False, 'error': error_msg}), 500
-        finally:
-            db.close()
 
     # ==================== AI分析API ====================
     
@@ -1893,13 +1795,13 @@ def register_routes(app):
             # 获取AI配置
             ai_provider = agent.ai_provider or get_config(db, 'default_ai_provider', 'openai')
             api_key_key = f'{ai_provider}_api_key'
-            api_key = get_config(db, api_key_key)
+            api_key = get_api_key(ai_provider, get_config(db, api_key_key))
             if not api_key:
                 return jsonify({'success': False, 'error': f'未配置{ai_provider} API Key'}), 400
-            
-            model = agent.model or get_config(db, f'{ai_provider}_model', 'gpt-3.5-turbo')
-            
-            # 获取股票数据
+                api_key = get_api_key(provider, get_config(db, f'{provider}_api_key'))
+                model = agent.model or get_config(db, f'{provider}_model', 'gpt-3.5-turbo')
+
+                # 为多头分析注入多股对比上下文
             print(f"[API] 获取股票数据: {code_str}")
             stock_data = get_comprehensive_data_with_indicators(code_str)
             formatted_data = format_for_ai(stock_data)

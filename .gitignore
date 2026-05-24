@@ -74,6 +74,7 @@ test/
 test_*.py
 *_test.py
 tests/
+!tests/
 
 # Output files
 *.txt

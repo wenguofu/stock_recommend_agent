@@ -357,11 +357,9 @@ def create_paper_account(db: Session, name: str, initial_capital: float = 100000
     account = PaperAccount(
         name=name, initial_capital=initial_capital, cash_balance=initial_capital,
         strategy_id=strategy_id, snapshot_interval=snapshot_interval,
-        include_etf_replacement=include_etf_replacement, enabled=True
+        include_etf_replacement=include_etf_replacement, enabled=True,
+        auto_trade=auto_trade
     )
-    # 支持auto_trade参数
-    if "auto_trade" in kwargs:
-        account.auto_trade = kwargs["auto_trade"]
     db.add(account)
     db.commit()
     db.refresh(account)
@@ -460,7 +458,7 @@ def search_etf_replacement(db: Session, code: str):
     if mapping:
         return mapping
     
-    # 688开头但没有映射的，推荐默认值
+    # 688开头但没有映射的，推荐默认值（返回 dict 保持兼容）
     if code.startswith("688"):
         return {
             "original_code": code,

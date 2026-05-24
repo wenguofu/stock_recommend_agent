@@ -12,6 +12,8 @@ import os
 import re
 from datetime import datetime, timedelta
 
+from config import API_BASE
+
 SECTOR_DATA_DIR = os.path.join(os.path.dirname(__file__), "sector_data")
 
 
@@ -146,7 +148,7 @@ def get_holdings_sector_context():
     
     import urllib.request
     try:
-        req = urllib.request.Request("http://127.0.0.1:35000/api/holdings")
+        req = urllib.request.Request(f"{API_BASE}/api/holdings")
         resp = urllib.request.urlopen(req, timeout=3)
         data = json.loads(resp.read().decode())
         holdings = data.get("data", [])

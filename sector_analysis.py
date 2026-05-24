@@ -10,7 +10,7 @@ import sys
 from datetime import datetime
 
 SECTOR_DATA_DIR = os.path.join(os.path.dirname(__file__), "sector_data")
-API_BASE = "http://127.0.0.1:35000"
+from config import API_BASE
 
 
 def get_latest_sector():

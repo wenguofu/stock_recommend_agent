@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: .
+      target: backend
+    ports:
+      - "35000:35000"
+    env_file:
+      - .env
+    volumes:
+      - ./database.db:/app/database.db
+      - ./logs:/app/logs
+      - ./eval_result:/app/eval_result
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: frontend-dev
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE_URL=http://backend:35000
+    depends_on:
+      - backend

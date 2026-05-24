@@ -4,6 +4,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+// 统一的 API 默认地址 — 修改 .env 即可全局生效
+const DEFAULT_API_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:35000';
+
 interface ConfigState {
   apiBaseURL: string;
   openaiApiKey: string;
@@ -24,7 +27,7 @@ interface ConfigState {
 export const useConfigStore = create<ConfigState>()(
   persist(
     (set) => ({
-      apiBaseURL: 'http://127.0.0.1:35000',
+      apiBaseURL: DEFAULT_API_URL,
       openaiApiKey: '',
       deepseekApiKey: '',
       qwenApiKey: '',
@@ -44,4 +47,3 @@ export const useConfigStore = create<ConfigState>()(
     }
   )
 );
-
