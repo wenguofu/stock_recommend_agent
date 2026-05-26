@@ -1,10 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { Button, Card, Tag, Select, Input, Space, Typography, Spin, Progress, Alert, Modal, Empty, Descriptions } from 'antd';
+import { PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, DownloadOutlined, ReloadOutlined, RightOutlined } from '@ant-design/icons';
 import { stockAPI, type StrategyDetail, type WatchlistItem, type DebateStep } from '../services/api';
 import ApplyToPaperPanel from '../components/ApplyToPaperPanel';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+
+const { Title, Text, Paragraph } = Typography;
 
 type Stage = 'select' | 'running' | 'done';
 type Mode = 'fast' | 'balanced' | 'deep';
@@ -60,7 +64,6 @@ export default function StrategyRun() {
 
   const removeSector = (sector: string) => {
     setSelectedSectors((prev) => prev.filter((s) => s !== sector));
-    // 移除该板块的所有股票（但保留手动添加的）
     stockAPI.getSectorStocks(sector).then((stocks) => {
       const sectorCodes = stocks.map((s) => s.code);
       setSelectedCodes((prev) => prev.filter((c) => !sectorCodes.includes(c)));
@@ -152,284 +155,292 @@ export default function StrategyRun() {
 
   if (strategyLoading || !strategy) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="text-center">
-          <div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-500">加载策略...</p>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '80px 0' }}>
+        <div style={{ textAlign: 'center' }}>
+          <Spin size="large" />
+          <div style={{ marginTop: 16 }}>
+            <Text type="secondary">加载策略...</Text>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       {/* 策略信息头部 */}
-      <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl p-6 text-white shadow-lg">
-        <div className="flex items-center justify-between">
+      <Card style={{ background: 'linear-gradient(135deg, #1677ff, #722ed1)', border: 'none', color: '#fff' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <h1 className="text-2xl font-bold">{strategy.name}</h1>
-            <p className="mt-1 text-blue-100">{strategy.description?.slice(0, 120)}</p>
-            <div className="mt-3 flex items-center gap-3 text-sm">
-              <span className="px-2 py-1 bg-white/20 rounded-full">{strategy.agent_configs.length}个Agent</span>
-              <span className="px-2 py-1 bg-white/20 rounded-full">
+            <Title level={2} style={{ color: '#fff', margin: 0 }}>{strategy.name}</Title>
+            <Paragraph style={{ color: 'rgba(255,255,255,0.8)', margin: '8px 0 12px' }}>
+              {strategy.description?.slice(0, 120)}
+            </Paragraph>
+            <Space>
+              <Tag style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff' }}>
+                {strategy.agent_configs.length}个Agent
+              </Tag>
+              <Tag style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff' }}>
                 {applyResult ? (applying ? '准备Agent中...' : applyResult) : '加载中...'}
-              </span>
-              {jobName && <span className="px-2 py-1 bg-green-400/30 rounded-full">运行中</span>}
-            </div>
+              </Tag>
+              {jobName && <Tag style={{ background: 'rgba(82,196,26,0.3)', border: 'none', color: '#fff' }}>运行中</Tag>}
+            </Space>
           </div>
         </div>
-      </div>
+      </Card>
 
       {stage === 'select' && (
         <>
           {/* 模式选择 */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">分析模式</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <Card title="分析模式">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
               {(['fast', 'balanced', 'deep'] as Mode[]).map((m) => {
                 const cfg = MODE_CONFIG[m];
                 return (
-                  <button
+                  <Card
                     key={m}
+                    hoverable
                     onClick={() => setMode(m)}
-                    className={`p-4 rounded-lg text-left border-2 transition-all ${
-                      mode === m
-                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-blue-300'
-                    }`}
+                    style={{
+                      borderColor: mode === m ? '#1677ff' : '#d9d9d9',
+                      background: mode === m ? '#e6f4ff' : '#fff',
+                      cursor: 'pointer',
+                    }}
+                    styles={{ body: { padding: 16 } }}
                   >
-                    <div className="font-semibold text-gray-900 dark:text-white">{cfg.label}</div>
-                    <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                      {cfg.analysisRounds}轮分析{cfg.debateRounds > 0 ? ` + ${cfg.debateRounds}轮辩论` : '（无辩论）'}
+                    <Text strong>{cfg.label}</Text>
+                    <div>
+                      <Text type="secondary" style={{ fontSize: 13 }}>
+                        {cfg.analysisRounds}轮分析{cfg.debateRounds > 0 ? ` + ${cfg.debateRounds}轮辩论` : '（无辩论）'}
+                      </Text>
                     </div>
-                  </button>
+                  </Card>
                 );
               })}
             </div>
-          </div>
+          </Card>
 
           {/* 选股 */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">选择股票</h2>
-              <span className="text-sm text-gray-500">已选 {selectedCodes.length} 只</span>
-            </div>
-
-            {/* 按板块添加 */}
-            <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/10 rounded-lg border border-blue-200 dark:border-blue-800">
-              <label className="block text-sm font-medium text-blue-700 dark:text-blue-300 mb-2">📂 按板块批量添加</label>
-              <div className="flex gap-2 mb-2">
-                <select
-                  id="sector-select"
-                  className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white text-sm"
-                  value=""
-                  onChange={(e) => { if (e.target.value) addSector(e.target.value); e.target.value = ''; }}
-                >
-                  <option value="">-- 选择板块 --</option>
-                  {sectors.map((s) => (
-                    <option key={s} value={s} disabled={selectedSectors.includes(s)}>{s}</option>
-                  ))}
-                </select>
+          <Card
+            title={
+              <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                <span>选择股票</span>
+                <Text type="secondary" style={{ fontSize: 13 }}>已选 {selectedCodes.length} 只</Text>
               </div>
-              {/* 已选板块标签 */}
+            }
+          >
+            {/* 按板块添加 */}
+            <Card
+              size="small"
+              style={{ background: '#e6f4ff', borderColor: '#91caff', marginBottom: 16 }}
+              styles={{ body: { padding: 12 } }}
+            >
+              <Text strong style={{ color: '#1677ff', display: 'block', marginBottom: 8 }}>📂 按板块批量添加</Text>
+              <Select
+                value={undefined}
+                onChange={(value) => { if (value) addSector(value); }}
+                placeholder="-- 选择板块 --"
+                style={{ width: '100%' }}
+                options={sectors.map((s) => ({
+                  value: s,
+                  label: s,
+                  disabled: selectedSectors.includes(s),
+                }))}
+              />
               {selectedSectors.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
                   {selectedSectors.map((s) => (
-                    <span key={s} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs">
+                    <Tag key={s} closable onClose={() => removeSector(s)} color="blue" style={{ margin: 0 }}>
                       📁 {s}
-                      <button onClick={() => removeSector(s)} className="hover:text-red-500">✕</button>
-                    </span>
+                    </Tag>
                   ))}
                 </div>
               )}
-            </div>
+            </Card>
 
             {/* 手动输入 */}
-            <div className="flex gap-2 mb-4">
-              <input
-                type="text"
+            <Space.Compact style={{ width: '100%', marginBottom: 16 }}>
+              <Input
                 value={manualCode}
                 onChange={(e) => setManualCode(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && addManualCode()}
                 placeholder="输入股票代码（如 603290）"
-                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
               />
-              <button
-                onClick={addManualCode}
-                disabled={!manualCode.trim()}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-              >
+              <Button type="primary" onClick={addManualCode} disabled={!manualCode.trim()}>
                 添加
-              </button>
-            </div>
+              </Button>
+            </Space.Compact>
 
             {/* 已选股票标签 */}
             {selectedCodes.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-4">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
                 {selectedCodes.map((code) => (
-                  <span key={code} className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded-full text-sm">
+                  <Tag key={code} closable onClose={() => removeCode(code)} color="blue">
                     {code}
-                    <button onClick={() => removeCode(code)} className="ml-1 hover:text-red-500">✕</button>
-                  </span>
+                  </Tag>
                 ))}
               </div>
             )}
 
             {/* 自选股列表 */}
-            <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">自选股</h3>
+            <Text strong style={{ display: 'block', marginBottom: 8 }}>自选股</Text>
             {watchlist && watchlist.length > 0 ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8 }}>
                 {watchlist.map((item) => (
-                  <button
+                  <Card
                     key={item.code}
+                    hoverable
+                    size="small"
                     onClick={() => toggleCode(item.code)}
-                    className={`flex items-center gap-2 p-2 rounded-lg border text-sm transition-all ${
-                      selectedCodes.includes(item.code)
-                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-blue-300 text-gray-700 dark:text-gray-300'
-                    }`}
+                    style={{
+                      borderColor: selectedCodes.includes(item.code) ? '#1677ff' : '#d9d9d9',
+                      background: selectedCodes.includes(item.code) ? '#e6f4ff' : '#fff',
+                    }}
+                    styles={{ body: { padding: 8 } }}
                   >
-                    <span className="w-2 h-2 rounded-full flex-shrink-0 ${selectedCodes.includes(item.code) ? 'bg-blue-500' : 'bg-gray-300'}"></span>
-                    <div className="text-left min-w-0">
-                      <div className="font-medium truncate">{item.name}</div>
-                      <div className="text-xs opacity-60">{item.code}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{
+                        width: 8, height: 8, borderRadius: '50%',
+                        background: selectedCodes.includes(item.code) ? '#1677ff' : '#d9d9d9',
+                        flexShrink: 0,
+                      }} />
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>
+                          {item.name}
+                        </div>
+                        <Text type="secondary" style={{ fontSize: 11 }}>{item.code}</Text>
+                      </div>
                     </div>
-                  </button>
+                  </Card>
                 ))}
               </div>
             ) : (
-              <div className="text-gray-400 text-sm text-center py-4">暂无自选股，请先在自选页面添加</div>
+              <Empty description="暂无自选股，请先在自选页面添加" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             )}
-          </div>
+          </Card>
 
           {/* Agent列表预览 */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">参与Agent（{strategy.agent_configs.length}个）</h2>
-            <div className="flex flex-wrap gap-2">
+          <Card title={`参与Agent（${strategy.agent_configs.length}个）`}>
+            <Space wrap>
               {strategy.agent_configs.map((a, i) => (
-                <span key={i} className="px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full text-sm border border-gray-200 dark:border-gray-600">
-                  {a.name}
-                </span>
+                <Tag key={i} style={{ padding: '4px 12px', fontSize: 13 }}>{a.name}</Tag>
               ))}
-            </div>
-          </div>
+            </Space>
+          </Card>
 
           {/* 错误提示 */}
           {error && (
-            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 text-red-700 dark:text-red-400">
-              {error}
-            </div>
+            <Alert message={error} type="error" showIcon closable onClose={() => setError('')} />
           )}
 
           {/* 启动按钮 */}
-          <div className="flex justify-center">
-            <button
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <Button
+              type="primary"
+              size="large"
+              icon={<PlayCircleOutlined />}
               onClick={handleStart}
               disabled={selectedCodes.length === 0}
-              className="flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl text-lg font-semibold hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg transition-all"
+              style={{
+                padding: '12px 40px',
+                height: 'auto',
+                fontSize: 18,
+                fontWeight: 600,
+                background: 'linear-gradient(135deg, #1677ff, #722ed1)',
+                border: 'none',
+              }}
             >
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
               启动 {strategy.name} 分析
-            </button>
+            </Button>
           </div>
         </>
       )}
 
       {stage === 'running' && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
-          <div className="text-center py-8">
-            <div className="animate-spin h-12 w-12 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
-            <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+        <Card>
+          <div style={{ textAlign: 'center', padding: '32px 0' }}>
+            <Spin size="large" />
+            <Title level={3} style={{ margin: '16px 0 8px' }}>
               {jobName || '分析进行中...'}
-            </h3>
-            <p className="text-gray-500 dark:text-gray-400 mb-2">
+            </Title>
+            <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
               进度：{jobStatus?.progress || 0}% | 状态：{jobStatus?.status || '排队中'}
-            </p>
-            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 max-w-md mx-auto">
-              <div
-                className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                style={{ width: `${jobStatus?.progress || 0}%` }}
-              ></div>
+            </Text>
+            <div style={{ maxWidth: 400, margin: '0 auto' }}>
+              <Progress percent={jobStatus?.progress || 0} status="active" />
             </div>
           </div>
 
           {/* Agent实时输出 */}
           {groupedSteps.length > 0 && (
-            <div className="mt-4 space-y-3">
-              <h4 className="font-semibold text-gray-900 dark:text-white">实时分析</h4>
-              {groupedSteps.map((group) => (
-                <details key={group.agent_id} className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden" open>
-                  <summary className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900 cursor-pointer">
-                    <span className="font-medium text-gray-900 dark:text-white">{group.agent_name}</span>
-                    <span className="text-xs text-gray-500">{group.items.length}轮</span>
-                  </summary>
-                  <div className="p-3 space-y-2">
-                    {group.items.map((step, i) => (
-                      <div key={i} className="bg-gray-50 dark:bg-gray-900 p-3 rounded text-sm">
-                        <div className="text-xs text-gray-400 mb-1">
-                          第{step.round}轮 {step.phase === 'analysis' ? '分析' : '辩论'}
+            <div style={{ marginTop: 24 }}>
+              <Title level={5}>实时分析</Title>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {groupedSteps.map((group) => (
+                  <Card
+                    key={group.agent_id}
+                    size="small"
+                    title={
+                      <Space>
+                        <Text strong>{group.agent_name}</Text>
+                        <Tag>{group.items.length}轮</Tag>
+                      </Space>
+                    }
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {group.items.map((step, i) => (
+                        <div key={i} style={{ padding: 12, background: '#fafafa', borderRadius: 6 }}>
+                          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+                            第{step.round}轮 {step.phase === 'analysis' ? '分析' : '辩论'}
+                          </Text>
+                          <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.6, color: '#595959' }}>
+                            {step.content.slice(0, 500)}{step.content.length > 500 ? '...' : ''}
+                          </pre>
                         </div>
-                        <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300 font-sans text-sm leading-relaxed">
-                          {step.content.slice(0, 500)}{step.content.length > 500 ? '...' : ''}
-                        </pre>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              ))}
+                      ))}
+                    </div>
+                  </Card>
+                ))}
+              </div>
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       {stage === 'done' && (
-        <div className="space-y-6">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           {/* 完成状态 */}
-          <div className={`rounded-lg p-6 ${jobStatus?.status === 'completed' ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'}`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {jobStatus?.status === 'completed' ? (
-                  <svg className="h-8 w-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                ) : (
-                  <svg className="h-8 w-8 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                )}
-                <div>
-                  <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
-                    {jobStatus?.status === 'completed' ? '分析完成！' : '分析失败'}
-                  </h3>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">{jobName}</p>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => navigate(`/ai-debate?job_id=${jobId}&code=${selectedCodes.join(',')}`)}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
+          <Alert
+            type={jobStatus?.status === 'completed' ? 'success' : 'error'}
+            showIcon
+            icon={jobStatus?.status === 'completed' ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
+            message={
+              <Title level={4} style={{ margin: 0 }}>
+                {jobStatus?.status === 'completed' ? '分析完成！' : '分析失败'}
+              </Title>
+            }
+            description={jobName}
+            action={
+              <Space>
+                <Button type="primary" onClick={() => navigate(`/ai-debate?job_id=${jobId}&code=${selectedCodes.join(',')}`)}>
                   查看完整报告
-                </button>
-                <button
-                  onClick={() => { setStage('select'); setJobId(''); setJobName(''); }}
-                  className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
-                >
+                </Button>
+                <Button onClick={() => { setStage('select'); setJobId(''); setJobName(''); }}>
                   重新运行
-                </button>
-              </div>
-            </div>
-          </div>
+                </Button>
+              </Space>
+            }
+          />
 
           {/* 报告预览 */}
           {reportHtml && (
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-                <h3 className="font-semibold text-gray-900 dark:text-white">分析报告</h3>
-                <button
+            <Card
+              title="分析报告"
+              extra={
+                <Button
+                  type="primary"
+                  icon={<DownloadOutlined />}
+                  size="small"
                   onClick={() => {
                     if (!jobStatus?.report_md) return;
                     const blob = new Blob([jobStatus.report_md], { type: 'text/markdown;charset=utf-8' });
@@ -440,13 +451,13 @@ export default function StrategyRun() {
                     a.click();
                     window.URL.revokeObjectURL(url);
                   }}
-                  className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
                 >
                   导出报告
-                </button>
-              </div>
-              <div className="p-6 prose dark:prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: reportHtml }} />
-            </div>
+                </Button>
+              }
+            >
+              <div className="prose dark:prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: reportHtml }} />
+            </Card>
           )}
 
           {/* 应用到模拟盘 */}
@@ -460,29 +471,33 @@ export default function StrategyRun() {
 
           {/* 完整Agent输出 */}
           {groupedSteps.length > 0 && (
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">完整Agent输出</h3>
-              <div className="space-y-3">
+            <Card title="完整Agent输出">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {groupedSteps.map((group) => (
-                  <details key={group.agent_id} className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-                    <summary className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900 cursor-pointer">
-                      <span className="font-medium text-gray-900 dark:text-white">{group.agent_name}</span>
-                      <span className="text-xs text-gray-500">{group.items.length}轮</span>
-                    </summary>
-                    <div className="p-3 space-y-2">
+                  <Card
+                    key={group.agent_id}
+                    size="small"
+                    title={
+                      <Space>
+                        <Text strong>{group.agent_name}</Text>
+                        <Tag>{group.items.length}轮</Tag>
+                      </Space>
+                    }
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {group.items.map((step, i) => (
-                        <div key={i} className="bg-gray-50 dark:bg-gray-900 p-4 rounded text-sm">
-                          <div className="text-xs text-blue-500 font-medium mb-2">
+                        <div key={i} style={{ padding: 16, background: '#fafafa', borderRadius: 6 }}>
+                          <Text style={{ color: '#1677ff', fontSize: 12, fontWeight: 500, display: 'block', marginBottom: 8 }}>
                             {step.phase === 'analysis' ? '📝 分析' : '💬 辩论'} · 第{step.round}轮 · {new Date(step.timestamp).toLocaleTimeString()}
-                          </div>
-                          <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300 font-sans text-sm leading-relaxed">{step.content}</pre>
+                          </Text>
+                          <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.6, color: '#595959' }}>{step.content}</pre>
                         </div>
                       ))}
                     </div>
-                  </details>
+                  </Card>
                 ))}
               </div>
-            </div>
+            </Card>
           )}
         </div>
       )}

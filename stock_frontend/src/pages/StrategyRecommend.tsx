@@ -22,7 +22,7 @@ import {
   ReloadOutlined,
   WarningOutlined,
   FireOutlined,
-  DiamondOutlined,
+  TrophyOutlined,
   RocketOutlined,
   PlusOutlined,
 } from '@ant-design/icons';
@@ -61,7 +61,7 @@ const TIME_OPTIONS = ['09:30','09:45','10:00','10:15','10:30','10:45','11:00','1
 
 const STRATEGY_TABS = [
   { key: 'strong_stocks', label: '强势股接力', color: '#1677ff', icon: <FireOutlined /> },
-  { key: 'tenbagger', label: '十倍潜力股', color: '#722ed1', icon: <DiamondOutlined /> },
+  { key: 'tenbagger', label: '十倍潜力股', color: '#722ed1', icon: <TrophyOutlined /> },
   { key: 'breakout', label: '突破形态', color: '#fa8c16', icon: <RocketOutlined /> },
 ];
 

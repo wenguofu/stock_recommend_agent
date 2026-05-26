@@ -1,5 +1,9 @@
 import { useState, useEffect } from 'react';
+import { Button, Card, Modal, Form, Select, Input, Space, Tag, Typography, Spin, Empty, Alert } from 'antd';
+import { PlusOutlined, CaretRightOutlined, PauseOutlined, EditOutlined, DeleteOutlined, FileTextOutlined, BellOutlined } from '@ant-design/icons';
 import { stockAPI } from '../services/api';
+
+const { Title, Text } = Typography;
 
 const SCHEDULE_OPTIONS = [
   { value: 'every_5m', label: '每5分钟' },
@@ -121,180 +125,166 @@ export default function Tasks() {
   const getTypeLabel = (v: string) => TASK_TYPE_OPTIONS.find((o) => o.value === v)?.label || v;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">📋 盯盘任务</h1>
-        <button onClick={openCreate} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-          + 新建任务
-        </button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Title level={2} style={{ margin: 0 }}>📋 盯盘任务</Title>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+          新建任务
+        </Button>
       </div>
 
       {/* 实时提醒面板 */}
       {alerts.length > 0 && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-yellow-300 dark:border-yellow-600 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 bg-yellow-50 dark:bg-yellow-900/20 border-b border-yellow-200 dark:border-yellow-700">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">🔔</span>
-              <h2 className="font-semibold text-yellow-800 dark:text-yellow-300">实时盯盘提醒</h2>
-              <span className="text-xs bg-yellow-200 dark:bg-yellow-700 text-yellow-800 dark:text-yellow-300 px-2 py-0.5 rounded-full">{alerts.length}条</span>
-            </div>
-            <button onClick={() => setShowAlerts(!showAlerts)} className="text-sm text-yellow-600 dark:text-yellow-400 hover:underline">
-              {showAlerts ? '收起' : '展开'}
-            </button>
-          </div>
+        <Card
+          style={{ borderColor: '#fadb14' }}
+          title={
+            <Space>
+              <BellOutlined />
+              <span>实时盯盘提醒</span>
+              <Tag color="gold">{alerts.length}条</Tag>
+            </Space>
+          }
+          extra={<a onClick={() => setShowAlerts(!showAlerts)}>{showAlerts ? '收起' : '展开'}</a>}
+        >
           {showAlerts && (
-            <div className="divide-y divide-gray-100 dark:divide-gray-700">
+            <div>
               {alerts.map((a, i) => (
-                <div key={i} className="px-4 py-3 flex items-start gap-3 hover:bg-gray-50 dark:hover:bg-gray-700/30">
-                  <span className={a.type === 'price_up' ? 'text-red-500 text-lg' : 'text-green-500 text-lg'}>
+                <div key={i} style={{ display: 'flex', padding: '8px 0', borderBottom: i < alerts.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
+                  <span style={{ fontSize: 20, marginRight: 8, color: a.type === 'price_up' ? '#ff4d4f' : '#52c41a' }}>
                     {a.type === 'price_up' ? '📈' : '📉'}
                   </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-gray-900 dark:text-white">{a.message}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 500 }}>{a.message}</div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
                       {new Date(a.timestamp).toLocaleString()} · 任务: {a.task_name}
-                    </div>
+                    </Text>
                   </div>
-                  <span className={`text-xs font-bold px-2 py-0.5 rounded self-center ${a.type === 'price_up' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                  <Tag color={a.type === 'price_up' ? 'red' : 'green'}>
                     {a.type === 'price_up' ? '+' : ''}{a.value?.toFixed(2)}%
-                  </span>
+                  </Tag>
                 </div>
               ))}
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       {/* 任务列表 */}
       {loading ? (
-        <div className="text-center py-12 text-gray-500">加载中...</div>
-      ) : tasks.length === 0 ? (
-        <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-lg shadow">
-          <p className="text-gray-500 dark:text-gray-400 mb-4">暂无盯盘任务</p>
-          <button onClick={openCreate} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-            创建第一个任务
-          </button>
+        <div style={{ textAlign: 'center', padding: 48 }}>
+          <Spin size="large" />
+          <div style={{ marginTop: 12 }}>
+            <Text type="secondary">加载中...</Text>
+          </div>
         </div>
+      ) : tasks.length === 0 ? (
+        <Card>
+          <Empty description="暂无盯盘任务">
+            <Button type="primary" onClick={openCreate}>创建第一个任务</Button>
+          </Empty>
+        </Card>
       ) : (
-        <div className="space-y-4">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {tasks.map((t) => (
-            <div key={t.id} className="bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700 overflow-hidden">
-              <div className="p-4 flex items-center justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-1">
-                    <h3 className="font-semibold text-gray-900 dark:text-white">{t.name}</h3>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
-                      {getTypeLabel(t.task_type)}
-                    </span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${t.enabled ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-gray-700 text-gray-500'}`}>
-                      {t.enabled ? '启用' : '停用'}
-                    </span>
+            <Card key={t.id} styles={{ body: { padding: 16 } }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ marginBottom: 4 }}>
+                    <Space>
+                      <Text strong>{t.name}</Text>
+                      <Tag color="blue">{getTypeLabel(t.task_type)}</Tag>
+                      <Tag color={t.enabled ? 'green' : 'default'}>{t.enabled ? '启用' : '停用'}</Tag>
+                    </Space>
                   </div>
-                  <div className="text-sm text-gray-500 dark:text-gray-400 space-y-0.5">
-                    <div>📈 {(t.codes || []).join(', ')}</div>
-                    <div>⏱ {getScheduleLabel(t.schedule)}</div>
-                    {t.last_run && <div>🕐 上次: {new Date(t.last_run).toLocaleString()}</div>}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <Text type="secondary" style={{ fontSize: 13 }}>
+                      📈 {(t.codes || []).join(', ')}
+                    </Text>
+                    <Text type="secondary" style={{ fontSize: 13 }}>
+                      ⏱ {getScheduleLabel(t.schedule)}
+                    </Text>
+                    {t.last_run && (
+                      <Text type="secondary" style={{ fontSize: 13 }}>
+                        🕐 上次: {new Date(t.last_run).toLocaleString()}
+                      </Text>
+                    )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 ml-4">
-                  <button onClick={() => handleTrigger(t.id)} className="px-3 py-1.5 text-xs bg-green-600 text-white rounded hover:bg-green-700">▶ 执行</button>
-                  <button onClick={() => stockAPI.updateTask(t.id, { enabled: !t.enabled }).then(() => fetchTasks())}
-                    className="px-3 py-1.5 text-xs bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-600">
+                <Space>
+                  <Button size="small" type="primary" danger={false} style={{ background: '#52c41a', borderColor: '#52c41a' }} icon={<CaretRightOutlined />} onClick={() => handleTrigger(t.id)}>执行</Button>
+                  <Button size="small" onClick={() => stockAPI.updateTask(t.id, { enabled: !t.enabled }).then(() => fetchTasks())}>
                     {t.enabled ? '暂停' : '启用'}
-                  </button>
-                  <button onClick={() => openEdit(t)} className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">编辑</button>
-                  <button onClick={() => handleDelete(t.id)} className="px-3 py-1.5 text-xs bg-red-600 text-white rounded hover:bg-red-700">删除</button>
-                  <button onClick={() => toggleLogs(t.id)} className="px-3 py-1.5 text-xs bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-600">
+                  </Button>
+                  <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(t)}>编辑</Button>
+                  <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(t.id)}>删除</Button>
+                  <Button size="small" icon={<FileTextOutlined />} onClick={() => toggleLogs(t.id)}>
                     {expandedLog === t.id ? '收起日志' : '日志'}
-                  </button>
-                </div>
+                  </Button>
+                </Space>
               </div>
               {/* 日志展开 */}
               {expandedLog === t.id && (
-                <div className="border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 p-4">
+                <div style={{ marginTop: 16, padding: 16, background: '#fafafa', borderRadius: 6 }}>
                   {(!logs[t.id] || logs[t.id].length === 0) ? (
-                    <p className="text-sm text-gray-500">暂无执行记录</p>
+                    <Text type="secondary" style={{ fontSize: 13 }}>暂无执行记录</Text>
                   ) : (
-                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 240, overflow: 'auto' }}>
                       {logs[t.id].map((log: any) => (
-                        <div key={log.id} className="flex items-center justify-between p-2 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 text-sm">
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded ${log.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                            {log.status}
-                          </span>
-                          <span className="text-gray-500">{new Date(log.started_at).toLocaleString()}</span>
-                          <span className="text-gray-600">{log.triggered_count > 0 ? `⚠ ${log.triggered_count}条提醒` : '无触发'}</span>
+                        <div key={log.id} style={{ display: 'flex', justifyContent: 'space-between', padding: 8, background: '#fff', borderRadius: 6, border: '1px solid #f0f0f0', fontSize: 13 }}>
+                          <Tag color={log.status === 'completed' ? 'green' : 'red'}>{log.status}</Tag>
+                          <Text type="secondary">{new Date(log.started_at).toLocaleString()}</Text>
+                          <Text>{log.triggered_count > 0 ? `⚠ ${log.triggered_count}条提醒` : '无触发'}</Text>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
               )}
-            </div>
+            </Card>
           ))}
         </div>
       )}
 
       {/* 创建/编辑弹窗 */}
-      {showForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={() => setShowForm(false)}>
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-              {editId ? '编辑任务' : '新建盯盘任务'}
-            </h2>
+      <Modal
+        title={editId ? '编辑任务' : '新建盯盘任务'}
+        open={showForm}
+        onCancel={() => setShowForm(false)}
+        onOk={handleSave}
+        okText={editId ? '保存修改' : '创建任务'}
+        cancelText="取消"
+        width={480}
+      >
+        <Form layout="vertical">
+          <Form.Item label="任务名称">
+            <Input value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="如：蓝思科技盯盘" />
+          </Form.Item>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">任务名称</label>
-              <input value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="如：蓝思科技盯盘"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white" />
+          <Form.Item label="任务类型" help={TASK_TYPE_OPTIONS.find((o) => o.value === formType)?.desc}>
+            <Select value={formType} onChange={setFormType} options={TASK_TYPE_OPTIONS} />
+          </Form.Item>
+
+          <Form.Item label="股票代码（多个用逗号分隔）">
+            <Input value={formCodes} onChange={(e) => setFormCodes(e.target.value)} placeholder="如：300433, AAPL, SE" />
+          </Form.Item>
+
+          <Form.Item label="执行频率">
+            <Select value={formSchedule} onChange={setFormSchedule} options={SCHEDULE_OPTIONS} />
+          </Form.Item>
+
+          {formType === 'price_alert' && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <Form.Item label="涨幅提醒（%）">
+                <Input type="number" value={formPriceUp} onChange={(e) => setFormPriceUp(e.target.value)} placeholder="如：5" />
+              </Form.Item>
+              <Form.Item label="跌幅提醒（%）">
+                <Input type="number" value={formPriceDown} onChange={(e) => setFormPriceDown(e.target.value)} placeholder="如：3" />
+              </Form.Item>
             </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">任务类型</label>
-              <select value={formType} onChange={(e) => setFormType(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white">
-                {TASK_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-              <p className="text-xs text-gray-500 mt-1">{TASK_TYPE_OPTIONS.find((o) => o.value === formType)?.desc}</p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">股票代码（多个用逗号分隔）</label>
-              <input value={formCodes} onChange={(e) => setFormCodes(e.target.value)} placeholder="如：300433, AAPL, SE"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white" />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">执行频率</label>
-              <select value={formSchedule} onChange={(e) => setFormSchedule(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white">
-                {SCHEDULE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </div>
-
-            {formType === 'price_alert' && (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">涨幅提醒（%）</label>
-                  <input type="number" value={formPriceUp} onChange={(e) => setFormPriceUp(e.target.value)} placeholder="如：5"
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">跌幅提醒（%）</label>
-                  <input type="number" value={formPriceDown} onChange={(e) => setFormPriceDown(e.target.value)} placeholder="如：3"
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white" />
-                </div>
-              </div>
-            )}
-
-            <div className="flex gap-3 pt-2">
-              <button onClick={() => setShowForm(false)} className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700">取消</button>
-              <button onClick={handleSave} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                {editId ? '保存修改' : '创建任务'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          )}
+        </Form>
+      </Modal>
     </div>
   );
 }
