@@ -110,6 +110,35 @@ def task_check_stada():
         pass
     return None
 
+def task_market_monitor():
+    """大盘趋势监控 - 每5分钟 (OpenSpec: market-trend-monitor)"""
+    if not is_trading_hours():
+        return None
+    import urllib.request, json
+    try:
+        req = urllib.request.Request(
+            f"{API_BASE}/api/market/monitor/quick",
+            headers={'User-Agent': 'scheduler/1.0'}
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+    except Exception:
+        return None
+
+    level = data.get('warning_level', 'normal')
+    if level in ('alert', 'danger'):
+        score = data.get('total_score', 0)
+        lines = [
+            f"⚠️ 大盘预警 {data.get('verdict', '')} 评分:{score}",
+            data.get('suggest', ''),
+        ]
+        signals = data.get('signals', [])
+        if signals:
+            for s in signals[:3]:
+                lines.append(f"• {s}")
+        return "\n".join(lines)
+    return None
+
 def task_update_sectors():
     """板块成分股每日更新 - 9:00"""
     import urllib.request
@@ -236,7 +265,17 @@ TASKS = [
         'name': '盯盘提醒推送',
         'func': task_check_alerts,
         'type': 'interval',
-        'interval': 300,  # 5分钟
+        'interval': 300,
+        'last_run': 0,
+        'run_count': 0,
+        'last_output': '',
+        'last_error': '',
+    },
+    {
+        'name': '大盘趋势监控',
+        'func': task_market_monitor,
+        'type': 'interval',
+        'interval': 300,
         'last_run': 0,
         'run_count': 0,
         'last_output': '',

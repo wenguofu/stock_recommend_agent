@@ -2892,6 +2892,72 @@ def register_routes(app):
         return jsonify({'success': True, **result})
 
     # ═══════════════════════════════════════════════════════════
+    # 大盘趋势监控 API (market_monitor — OpenSpec: market-trend-monitor)
+    # ═══════════════════════════════════════════════════════════
+
+    @app.route('/api/market/monitor', methods=['GET'])
+    def market_monitor_full():
+        """大盘趋势完整监控报告"""
+        try:
+            from market_monitor import full_monitor as _full_monitor
+            code = request.args.get('code', 'sh000001')
+            result = _full_monitor(code)
+            return jsonify({'success': True, **result})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/market/monitor/quick', methods=['GET'])
+    def market_monitor_quick():
+        """大盘趋势轻量查询（仅预警等级+分数）"""
+        try:
+            from market_monitor import full_monitor as _full_monitor
+            code = request.args.get('code', 'sh000001')
+            result = _full_monitor(code)
+            return jsonify({
+                'success': True,
+                'code': result.get('code', code),
+                'warning_level': result.get('warning_level'),
+                'total_score': result.get('total_score'),
+                'verdict': result.get('verdict'),
+                'suggest': result.get('suggest'),
+                'signals': result.get('signals', []),
+                'cur_price': result.get('cur_price'),
+                'timestamp': result.get('timestamp'),
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/market/monitor/history', methods=['GET'])
+    def market_monitor_history():
+        """大盘各维度分数明细"""
+        try:
+            from market_monitor import full_monitor as _full_monitor
+            code = request.args.get('code', 'sh000001')
+            result = _full_monitor(code)
+            checks = result.get('checks', {})
+            dimensions = {}
+            for name, check in checks.items():
+                signal_text = check.get('detail', '')
+                if not signal_text:
+                    signal_text = ', '.join(check.get('signals', []))
+                dimensions[name] = {
+                    'score': check.get('score', 0),
+                    'summary': signal_text
+                }
+            return jsonify({
+                'success': True,
+                'code': result.get('code', code),
+                'current': {
+                    'warning_level': result.get('warning_level'),
+                    'total_score': result.get('total_score'),
+                    'verdict': result.get('verdict'),
+                },
+                'dimensions': dimensions,
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    # ═══════════════════════════════════════════════════════════
     # 模拟盘系统 API
     # ═══════════════════════════════════════════════════════════
 
