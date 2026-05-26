@@ -29,11 +29,18 @@ scripts/market_alert.py   # no_agent推送脚本
 
 ### B0: 市场宽度 — 硬性标准（权重25%）
 - 🆕 数据源: AKShare `stock_zt_pool_em(date)` 涨停池 + `stock_zt_pool_dtgc_em(date)` 跌停池
-- 非交易时段 → 使用最近交易日数据，score=0（宽度只在盘中有效）
+- **已确认**: AKShare 涨停/跌停池包含科创板(688)和创业板(300)，无需额外处理
 - 条件1: 跌停家数 > 50 → score += 15
 - 条件2: 涨停家数 < 50 → score += 15
 - 双条件同时触发 → score = 25（封顶）
 - 返回: `{score, signals[], limit_up_count, limit_down_count, date}`
+
+### B-1: 熊市确认 — 周度累计规则（硬覆盖）
+- 🆕 每日自动保存预警等级到 DB 表 `market_alert_log`
+- 规则: 过去5个交易日中，>3天处于 alert(🟠) 或 danger(🔴) → 直接拉满到 danger(🔴)，score=100
+- 触发后: verdict 显示 "⚠️ 熊市确认：近5日已有N天预警，转入防御模式"
+- DB 表: `market_alert_log(date TEXT PK, level TEXT, score INT, signals TEXT)`
+- 仅在交易时段(9:30-15:00)保存记录（避免盘后重复写入）
 
 ### B1: 数据获取
 - `get_index_kline(code, days)` 调用 `data_fetchers.get_daily_kline()`

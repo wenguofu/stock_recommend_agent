@@ -553,3 +553,39 @@ def test_market_breadth_returns_counts():
     result = _score_breadth(limit_up=45, limit_down=15)
     assert result['limit_up_count'] == 45
     assert result['limit_down_count'] == 15
+
+
+# ═══════════════════════════════════════════════════════
+# B-1: Bear Market Confirmation — 周度累计规则
+# ═══════════════════════════════════════════════════════
+
+def test_bear_confirmation_triggered():
+    """过去5天4天alert → 触发熊市确认"""
+    from market_monitor import _check_bear_confirmation
+    history = ['alert', 'alert', 'danger', 'alert', 'normal']
+    result = _check_bear_confirmation(history)
+    assert result is True
+
+
+def test_bear_confirmation_not_triggered():
+    """过去5天仅2天alert → 不触发"""
+    from market_monitor import _check_bear_confirmation
+    history = ['alert', 'normal', 'alert', 'normal', 'normal']
+    result = _check_bear_confirmation(history)
+    assert result is False
+
+
+def test_bear_confirmation_exactly_3_days():
+    """恰好3天 → 不触发(需要>3)"""
+    from market_monitor import _check_bear_confirmation
+    history = ['alert', 'alert', 'alert', 'normal', 'normal']
+    result = _check_bear_confirmation(history)
+    assert result is False
+
+
+def test_bear_confirmation_short_history():
+    """不足5天数据 → 不触发"""
+    from market_monitor import _check_bear_confirmation
+    history = ['alert', 'alert']
+    result = _check_bear_confirmation(history)
+    assert result is False

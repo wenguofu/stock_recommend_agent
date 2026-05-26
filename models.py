@@ -388,6 +388,17 @@ class TradeJournal(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
+class MarketAlertLog(Base):
+    """大盘预警日志 — 熊市确认用 (OpenSpec: market-trend-monitor)"""
+    __tablename__ = 'market_alert_log'
+
+    date = Column(String(10), primary_key=True)       # YYYY-MM-DD
+    level = Column(String(20), nullable=False)          # normal/watch/alert/danger
+    score = Column(Integer, default=0)
+    signals = Column(Text)                              # JSON array of signal strings
+    created_at = Column(DateTime, default=datetime.now)
+
+
 # 数据库初始化
 DB_PATH = os.path.join(os.path.dirname(__file__), 'database.db')
 engine = create_engine(f'sqlite:///{DB_PATH}', echo=False)

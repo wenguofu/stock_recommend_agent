@@ -305,6 +305,75 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 
 # ═══════════════════════════════════════════════════════
+# B-1: Bear Market Confirmation — 周度累计规则
+# ═══════════════════════════════════════════════════════
+
+BEAR_CONFIRM_DAYS = 3  # 过去5个交易日中 >N 天预警 → 熊市确认
+
+
+def _check_bear_confirmation(history: list) -> bool:
+    """检查是否触发熊市确认：过去5天 >3天 alert/danger"""
+    if len(history) < 5:
+        return False
+    recent = history[-5:]
+    alert_days = sum(1 for level in recent if level in ('alert', 'danger'))
+    return alert_days > BEAR_CONFIRM_DAYS
+
+
+def _get_recent_alert_history() -> list:
+    """从DB读取最近5个交易日的预警等级"""
+    import json
+    try:
+        from models import SessionLocal, MarketAlertLog
+        db = SessionLocal()
+        try:
+            rows = db.query(MarketAlertLog)\
+                     .order_by(MarketAlertLog.date.desc())\
+                     .limit(5).all()
+            return [r.level for r in reversed(rows)]
+        finally:
+            db.close()
+    except Exception:
+        return []
+
+
+def _save_alert_log(date_str: str, level: str, score: int, signals: list):
+    """保存预警日志到DB（UPSERT）"""
+    import json
+    from datetime import datetime as dt
+    
+    # 仅交易时段保存
+    now = dt.now()
+    h, m = now.hour, now.minute
+    if not ((h == 9 and m >= 30) or h == 10 or (h == 11 and m <= 30) or
+            h == 13 or h == 14 or (h == 15 and m == 0)):
+        return
+    
+    try:
+        from models import SessionLocal, MarketAlertLog
+        db = SessionLocal()
+        try:
+            existing = db.query(MarketAlertLog).filter(
+                MarketAlertLog.date == date_str
+            ).first()
+            signals_json = json.dumps(signals[:5], ensure_ascii=False)
+            if existing:
+                existing.level = level
+                existing.score = score
+                existing.signals = signals_json
+            else:
+                db.add(MarketAlertLog(
+                    date=date_str, level=level, score=score,
+                    signals=signals_json
+                ))
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+
+# ═══════════════════════════════════════════════════════
 # B0: Market Breadth — 硬性标准 (涨跌停家数)
 # ═══════════════════════════════════════════════════════
 
@@ -470,6 +539,20 @@ def full_monitor(code: str = 'sh000001') -> dict:
         warning_level = 'alert'
     else:
         warning_level = 'danger'
+
+    # B-1: 保存日志 + 熊市确认检查
+    from datetime import datetime as _dt
+    today_str = _dt.now().strftime('%Y-%m-%d')
+    _save_alert_log(today_str, warning_level, total_score, all_signals)
+
+    history = _get_recent_alert_history()
+    if _check_bear_confirmation(history):
+        warning_level = 'danger'
+        total_score = max(total_score, 85)
+        alert_days = sum(1 for l in history[-5:] if l in ('alert', 'danger'))
+        all_signals.append(
+            f'⚠️ 熊市确认：近5日已有{alert_days}天预警，转入防御模式'
+        )
 
     # Verdict and suggestion
     verdict_map = {
