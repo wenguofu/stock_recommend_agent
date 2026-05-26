@@ -1,38 +1,45 @@
-import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ReactNode, useState, useEffect } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Layout as AntLayout, Menu, Segmented, Typography, theme } from 'antd';
+import {
+  HomeOutlined, StarOutlined, ExperimentOutlined, ThunderboltOutlined,
+  BarChartOutlined, SettingOutlined, OrderedListOutlined, TrophyOutlined,
+  ScheduleOutlined, LineChartOutlined, AimOutlined, BulbOutlined,
+} from '@ant-design/icons';
+
+const { Sider, Content } = AntLayout;
+const { Text } = Typography;
 
 interface LayoutProps {
   children: ReactNode;
 }
 
-/** 短线量化导航 */
 const QUANT_NAV = [
-  { path: '/', label: '首页' },
-  { path: '/watchlist', label: '自选' },
-  { path: '/paper', label: '模拟盘' },
-  { path: '/paper/rankings', label: '收益排名' },
-  { path: '/recommendations', label: '股票推荐' },
-  { path: '/tasks', label: '任务' },
-  { path: '/strategies', label: '策略库' },
-  { path: '/strategy', label: '策略推荐' },
-  { path: '/backtest', label: '回测' },
-  { path: '/sector-prediction', label: '🔮主线预判' },
-  { path: '/settings', label: '配置' },
+  { path: '/', label: '首页', icon: <HomeOutlined /> },
+  { path: '/watchlist', label: '自选', icon: <StarOutlined /> },
+  { path: '/paper', label: '模拟盘', icon: <ExperimentOutlined /> },
+  { path: '/paper/rankings', label: '收益排名', icon: <TrophyOutlined /> },
+  { path: '/recommendations', label: '股票推荐', icon: <BulbOutlined /> },
+  { path: '/tasks', label: '任务', icon: <ScheduleOutlined /> },
+  { path: '/strategies', label: '策略库', icon: <OrderedListOutlined /> },
+  { path: '/strategy', label: '策略推荐', icon: <ThunderboltOutlined /> },
+  { path: '/backtest', label: '回测', icon: <BarChartOutlined /> },
+  { path: '/sector-prediction', label: '主线预判', icon: <AimOutlined /> },
+  { path: '/settings', label: '配置', icon: <SettingOutlined /> },
 ];
 
-/** 中长线交易导航 */
 const MIDLINE_NAV = [
-  { path: '/midline', label: '📋 自选池健康度' },
-  { path: '/settings', label: '配置' },
+  { path: '/midline', label: '自选池健康度', icon: <LineChartOutlined /> },
+  { path: '/settings', label: '配置', icon: <SettingOutlined /> },
 ];
 
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
-
-  // 根据路径判断当前策略模式
+  const { token } = theme.useToken();
   const isMidline = location.pathname.startsWith('/midline');
   const [strategy, setStrategy] = useState<'quant' | 'midline'>(isMidline ? 'midline' : 'quant');
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     setStrategy(isMidline ? 'midline' : 'quant');
@@ -40,65 +47,72 @@ export default function Layout({ children }: LayoutProps) {
 
   const navItems = strategy === 'midline' ? MIDLINE_NAV : QUANT_NAV;
 
-  const switchStrategy = (s: 'quant' | 'midline') => {
+  // 匹配当前路径到导航项
+  const resolvedKey = (() => {
+    const exact = navItems.find(i => i.path === location.pathname);
+    if (exact) return exact.path;
+    const prefix = navItems.find(i => location.pathname.startsWith(i.path + '/'));
+    if (prefix) return prefix.path;
+    return '/';
+  })();
+
+  const switchStrategy = (val: string | number) => {
+    const s = val as 'quant' | 'midline';
     setStrategy(s);
     navigate(s === 'midline' ? '/midline' : '/');
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <nav className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          {/* 策略切换栏 */}
-          <div className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700">
-            <Link to="/" className="text-lg font-bold text-gray-900 dark:text-white">
-              📈 股票交易系统
-            </Link>
-            <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-0.5">
-              <button
-                onClick={() => switchStrategy('quant')}
-                className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
-                  strategy === 'quant'
-                    ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow font-medium'
-                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700'
-                }`}
-              >
-                ⚡ 短线量化
-              </button>
-              <button
-                onClick={() => switchStrategy('midline')}
-                className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
-                  strategy === 'midline'
-                    ? 'bg-white dark:bg-gray-600 text-green-600 dark:text-green-400 shadow font-medium'
-                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700'
-                }`}
-              >
-                📊 中长线交易
-              </button>
-            </div>
-          </div>
-          {/* 子导航 */}
-          <div className="flex space-x-6 h-10 overflow-x-auto">
-            {navItems.map((item) => (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`inline-flex items-center px-1 border-b-2 text-sm font-medium whitespace-nowrap ${
-                  location.pathname === item.path
-                    ? 'border-blue-500 text-gray-900 dark:text-white'
-                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-                }`}
-              >
-                {item.label}
-              </Link>
-            ))}
-          </div>
+    <AntLayout style={{ minHeight: '100vh' }}>
+      <Sider
+        collapsible
+        collapsed={collapsed}
+        onCollapse={setCollapsed}
+        breakpoint="lg"
+        style={{ background: token.colorBgContainer }}
+      >
+        <div style={{
+          height: 64,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderBottom: `1px solid ${token.colorBorderSecondary}`,
+        }}>
+          <Text strong style={{ fontSize: collapsed ? 14 : 16, whiteSpace: 'nowrap' }}>
+            📈 {collapsed ? '' : '股票交易系统'}
+          </Text>
         </div>
-      </nav>
 
-      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        {children}
-      </main>
-    </div>
+        <div style={{ padding: '12px 16px' }}>
+          <Segmented
+            block
+            size="small"
+            value={strategy}
+            onChange={switchStrategy}
+            options={[
+              { label: '⚡ 短线', value: 'quant' },
+              { label: '📊 中长线', value: 'midline' },
+            ]}
+          />
+        </div>
+
+        <Menu
+          mode="inline"
+          selectedKeys={[resolvedKey]}
+          items={navItems.map(item => ({
+            key: item.path,
+            icon: item.icon,
+            label: <Link to={item.path}>{item.label}</Link>,
+          }))}
+          style={{ borderInlineEnd: 'none' }}
+        />
+      </Sider>
+
+      <AntLayout>
+        <Content style={{ padding: 24, background: token.colorBgLayout, minHeight: '100vh' }}>
+          {children}
+        </Content>
+      </AntLayout>
+    </AntLayout>
   );
 }
