@@ -5,43 +5,60 @@ import { useWatchlistStore } from '../store/watchlistStore';
 import { stockAPI } from '../services/api';
 import AIAnalyzeButton from '../components/AIAnalyzeButton';
 import type { Agent } from '../services/api';
+import {
+  Card,
+  Table,
+  Input,
+  Button,
+  Modal,
+  Segmented,
+  Alert,
+  Spin,
+  Space,
+  Checkbox,
+  Typography,
+  InputNumber,
+  App,
+} from 'antd';
+
+const { Title } = Typography;
+
+type MultiMode = 'fast' | 'balanced' | 'deep';
 
 // 判断是否在交易时间
 function isTradingTime(): boolean {
   const now = new Date();
   const hour = now.getHours();
   const minute = now.getMinutes();
-  const day = now.getDay(); // 0=周日, 6=周六
-  
-  // 周末不交易
+  const day = now.getDay();
+
   if (day === 0 || day === 6) return false;
-  
-  // 交易时间：9:30-11:30, 13:00-15:00
-  const morningStart = hour === 9 && minute >= 30 || hour > 9 && hour < 11 || hour === 11 && minute <= 30;
+
+  const morningStart = (hour === 9 && minute >= 30) || (hour > 9 && hour < 11) || (hour === 11 && minute <= 30);
   const afternoonStart = hour >= 13 && hour < 15;
-  
+
   return morningStart || afternoonStart;
 }
 
-// 根据交易时间返回更新间隔（毫秒）
 function getRefetchInterval(): number {
-  return isTradingTime() ? 5000 : 60000; // 交易时间5秒，非交易时间60秒
+  return isTradingTime() ? 5000 : 60000;
 }
 
 export default function Watchlist() {
   const { items, loading, addStock, removeStock, error: storeError } = useWatchlistStore();
+  const { message } = App.useApp();
   const [codeInput, setCodeInput] = useState('');
-  const [costInput, setCostInput] = useState('');
-  const [sharesInput, setSharesInput] = useState('');
+  const [costInput, setCostInput] = useState<number | null>(null);
+  const [sharesInput, setSharesInput] = useState<number | null>(null);
   const [showPositionFields, setShowPositionFields] = useState(false);
   const [adding, setAdding] = useState(false);
   const [editPosition, setEditPosition] = useState<string | null>(null);
-  const [editCost, setEditCost] = useState('');
-  const [editShares, setEditShares] = useState('');
+  const [editCost, setEditCost] = useState<number | null>(null);
+  const [editShares, setEditShares] = useState<number | null>(null);
   const [selectedCodes, setSelectedCodes] = useState<string[]>([]);
   const [showMultiModal, setShowMultiModal] = useState(false);
   const [selectedAgentIds, setSelectedAgentIds] = useState<number[]>([]);
-  const [multiMode, setMultiMode] = useState<'fast' | 'balanced' | 'deep'>('fast');
+  const [multiMode, setMultiMode] = useState<MultiMode>('fast');
   const [multiError, setMultiError] = useState<string | null>(null);
   const navigate = useNavigate();
 
@@ -60,30 +77,27 @@ export default function Watchlist() {
   const handleAdd = async () => {
     const code = codeInput.trim();
     if (!code) {
-      alert('请输入股票代码（A股6位数字 或 美股ticker，如 AAPL）');
+      message.error('请输入股票代码（A股6位数字 或 美股ticker，如 AAPL）');
       return;
     }
-    // 校验格式：6位数字(A股) 或 1-5位字母(美股)
     const isACode = /^\d{6}$/.test(code);
     const isUsCode = /^[A-Za-z]{1,5}$/.test(code);
     if (!isACode && !isUsCode) {
-      alert('股票代码格式错误：A股输入6位数字(如 000001)，美股输入ticker(如 AAPL)');
+      message.error('股票代码格式错误：A股输入6位数字(如 000001)，美股输入ticker(如 AAPL)');
       return;
     }
 
     setAdding(true);
     try {
-      // 先获取股票名称
       const realtime = await stockAPI.getRealtime(code);
-      const costPrice = costInput ? parseFloat(costInput) : null;
-      const shares = sharesInput ? parseInt(sharesInput) : null;
-      await addStock(code, realtime.name, costPrice, shares);
+      await addStock(code, realtime.name, costInput, sharesInput);
       setCodeInput('');
-      setCostInput('');
-      setSharesInput('');
+      setCostInput(null);
+      setSharesInput(null);
       setShowPositionFields(false);
+      message.success('添加成功');
     } catch (error) {
-      alert(`添加失败: ${(error as Error).message}`);
+      message.error(`添加失败: ${(error as Error).message}`);
     } finally {
       setAdding(false);
     }
@@ -106,14 +120,11 @@ export default function Watchlist() {
 
   const handleSavePosition = async (code: string) => {
     try {
-      const costPrice = editCost ? parseFloat(editCost) : null;
-      const shares = editShares ? parseInt(editShares) : null;
-      await stockAPI.updateWatchlistPosition(code, costPrice, shares);
+      await stockAPI.updateWatchlistPosition(code, editCost, editShares);
       setEditPosition(null);
-      // Refresh the list
       useWatchlistStore.getState().fetchWatchlist();
     } catch (error) {
-      alert(`更新失败: ${(error as Error).message}`);
+      message.error(`更新失败: ${(error as Error).message}`);
     }
   };
 
@@ -150,416 +161,388 @@ export default function Watchlist() {
     }
   };
 
+  // Table columns
+  const columns = [
+    {
+      title: '',
+      key: 'select',
+      width: 50,
+      render: (_: unknown, record: { code: string }) => (
+        <Checkbox
+          checked={selectedCodes.includes(record.code)}
+          onChange={() => toggleSelectCode(record.code)}
+          aria-label={`选择 ${record.code}`}
+        />
+      ),
+    },
+    {
+      title: '股票',
+      key: 'stock',
+      render: (_: unknown, record: { code: string; name: string; cost_price?: number | null; shares?: number | null }) => {
+        const hasPosition = record.cost_price != null && record.shares != null && record.shares > 0;
+        return (
+          <Link to={`/stock/${record.code}`} style={{ color: 'inherit', textDecoration: 'none' }}>
+            <div style={{ fontWeight: 600 }}>{record.name || record.code}</div>
+            <div style={{ fontSize: 12, color: '#999' }}>{record.code}</div>
+            {hasPosition && (
+              <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>
+                成本{record.cost_price!.toFixed(2)} × {record.shares!.toLocaleString()}股
+              </div>
+            )}
+          </Link>
+        );
+      },
+    },
+    {
+      title: '现价',
+      key: 'price',
+      width: 100,
+      render: (_: unknown, record: { code: string }) => (
+        <WatchlistPriceCell code={record.code} />
+      ),
+    },
+    {
+      title: '涨跌幅',
+      key: 'change',
+      width: 100,
+      render: (_: unknown, record: { code: string }) => (
+        <WatchlistChangeCell code={record.code} />
+      ),
+    },
+    {
+      title: '持仓盈亏',
+      key: 'pnl',
+      width: 120,
+      render: (_: unknown, record: { code: string; cost_price?: number | null; shares?: number | null }) => (
+        <WatchlistPnlCell code={record.code} costPrice={record.cost_price} shares={record.shares} />
+      ),
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 220,
+      render: (_: unknown, record: { code: string; name: string; cost_price?: number | null; shares?: number | null }) => {
+        const hasPosition = record.cost_price != null && record.shares != null && record.shares > 0;
+        return (
+          <Space size="small" wrap>
+            <AIAnalyzeButton code={record.code} />
+            {!hasPosition ? (
+              <Button
+                size="small"
+                onClick={() => {
+                  setEditPosition(record.code);
+                  setEditCost(null);
+                  setEditShares(null);
+                }}
+              >
+                设置持仓
+              </Button>
+            ) : (
+              <Button
+                size="small"
+                onClick={() => {
+                  setEditPosition(record.code);
+                  setEditCost(record.cost_price ?? null);
+                  setEditShares(record.shares ?? null);
+                }}
+              >
+                编辑持仓
+              </Button>
+            )}
+            <Button
+              size="small"
+              danger
+              onClick={() => removeStock(record.code)}
+            >
+              删除
+            </Button>
+          </Space>
+        );
+      },
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">自选股管理</h1>
+    <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Title level={2} style={{ margin: 0 }}>自选股管理</Title>
         {selectedCodes.length >= 2 && (
-          <button
-            onClick={handleOpenMulti}
-            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-          >
+          <Button type="primary" style={{ backgroundColor: '#722ed1', borderColor: '#722ed1' }} onClick={handleOpenMulti}>
             多选一 AI分析
-          </button>
+          </Button>
         )}
       </div>
 
-      {/* 添加自选股 */}
+      {/* Store Error */}
       {storeError && (
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 text-red-700 dark:text-red-400 text-sm">
-          ❌ {storeError}
-        </div>
+        <Alert
+          type="error"
+          message={storeError}
+          showIcon
+          closable
+        />
       )}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">添加自选股</h2>
-        <div className="flex flex-col gap-3">
-          <div className="flex gap-2">
-            <input
-              type="text"
+
+      {/* Add Form */}
+      <Card title="添加自选股">
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Space.Compact style={{ width: '100%' }}>
+            <Input
               value={codeInput}
               onChange={(e) => setCodeInput(e.target.value)}
               placeholder="股票代码（A股6位数字 或 美股ticker，如 000001 / AAPL）"
-              className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
               maxLength={10}
+              style={{ flex: 1 }}
             />
-            <button
+            <Button
+              type="primary"
               onClick={handleAdd}
-              disabled={adding}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              loading={adding}
             >
               {adding ? '添加中...' : '添加'}
-            </button>
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showPositionFields}
-                onChange={(e) => setShowPositionFields(e.target.checked)}
-                className="rounded"
-              />
-              添加持仓信息
-            </label>
-          </div>
+            </Button>
+          </Space.Compact>
+
+          <Checkbox
+            checked={showPositionFields}
+            onChange={(e) => setShowPositionFields(e.target.checked)}
+          >
+            添加持仓信息
+          </Checkbox>
+
           {showPositionFields && (
-            <div className="flex gap-3">
-              <input
-                type="number"
+            <Space>
+              <InputNumber
                 value={costInput}
-                onChange={(e) => setCostInput(e.target.value)}
+                onChange={(val) => setCostInput(val)}
                 placeholder="持仓成本价（元）"
-                step="0.01"
-                className="w-48 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                step={0.01}
+                style={{ width: 200 }}
               />
-              <input
-                type="number"
+              <InputNumber
                 value={sharesInput}
-                onChange={(e) => setSharesInput(e.target.value)}
+                onChange={(val) => setSharesInput(val)}
                 placeholder="持股数量（股）"
-                step="100"
-                className="w-48 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                step={100}
+                style={{ width: 200 }}
               />
-            </div>
+            </Space>
           )}
-        </div>
-      </div>
+        </Space>
+      </Card>
 
-      {/* 自选股列表 */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
-        <div className="p-6">
-          <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">我的自选</h2>
-          {loading ? (
-            <div className="text-center py-8 text-gray-500">加载中...</div>
-          ) : items.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">暂无自选股</div>
+      {/* Watchlist Table */}
+      <Card title="我的自选">
+        <Spin spinning={loading}>
+          {items.length === 0 && !loading ? (
+            <div style={{ textAlign: 'center', padding: 32, color: '#999' }}>暂无自选股</div>
           ) : (
-            <div className="space-y-2">
-              {items.map((item) => (
-                <WatchlistItem
-                  key={item.id}
-                  item={item}
-                  onRemove={() => removeStock(item.code)}
-                  selected={selectedCodes.includes(item.code)}
-                  onToggleSelect={() => toggleSelectCode(item.code)}
-                  editPosition={editPosition}
-                  editCost={editCost}
-                  editShares={editShares}
-                  setEditPosition={setEditPosition}
-                  setEditCost={setEditCost}
-                  setEditShares={setEditShares}
-                  onSavePosition={handleSavePosition}
-                />
-              ))}
-            </div>
+            <Table
+              dataSource={items}
+              columns={columns}
+              rowKey={(record) => record.code}
+              pagination={false}
+              size="middle"
+            />
           )}
-        </div>
-      </div>
+        </Spin>
+      </Card>
 
-      {/* 多选一 模态 */}
-      {showMultiModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">多选一 AI分析</h2>
-              <button
-                onClick={() => {
-                  setShowMultiModal(false);
-                  setMultiError(null);
-                }}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-6 space-y-4">
-              <div className="text-sm text-gray-600 dark:text-gray-400">
-                本模式要求从所选股票中<strong>必须选择一只</strong>进行买入决策。
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  选择模式
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <button
-                    onClick={() => setMultiMode('fast')}
-                    className={`px-3 py-2 rounded-lg text-sm border ${
-                      multiMode === 'fast'
-                        ? 'border-purple-600 bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
-                        : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'
-                    }`}
-                  >
-                    快速模式
-                    <div className="text-xs opacity-70">思考1 / 辩论1</div>
-                  </button>
-                  <button
-                    onClick={() => setMultiMode('balanced')}
-                    className={`px-3 py-2 rounded-lg text-sm border ${
-                      multiMode === 'balanced'
-                        ? 'border-purple-600 bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
-                        : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'
-                    }`}
-                  >
-                    均衡模式
-                    <div className="text-xs opacity-70">思考2 / 辩论1</div>
-                  </button>
-                  <button
-                    onClick={() => setMultiMode('deep')}
-                    className={`px-3 py-2 rounded-lg text-sm border ${
-                      multiMode === 'deep'
-                        ? 'border-purple-600 bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
-                        : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'
-                    }`}
-                  >
-                    深入模式
-                    <div className="text-xs opacity-70">思考3 / 辩论2</div>
-                  </button>
-                </div>
-              </div>
+      {/* Edit Position Modal */}
+      <Modal
+        title={`编辑持仓 - ${items.find((it) => it.code === editPosition)?.name || editPosition || ''}`}
+        open={editPosition !== null}
+        onCancel={() => setEditPosition(null)}
+        onOk={() => {
+          if (editPosition) handleSavePosition(editPosition);
+        }}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <InputNumber
+            value={editCost}
+            onChange={(val) => setEditCost(val)}
+            placeholder="持仓成本价（元）"
+            step={0.01}
+            style={{ width: '100%' }}
+          />
+          <InputNumber
+            value={editShares}
+            onChange={(val) => setEditShares(val)}
+            placeholder="持股数量（股）"
+            step={100}
+            style={{ width: '100%' }}
+          />
+        </Space>
+      </Modal>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  选择参与辩论的Agent（至少2个）
-                </label>
-                {agentsLoading ? (
-                  <div className="text-gray-500">加载中...</div>
-                ) : agents && agents.length > 0 ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {agents.map((agent: Agent) => (
-                      <label
-                        key={agent.id}
-                        className="flex items-center gap-2 p-2 border border-gray-200 dark:border-gray-700 rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedAgentIds.includes(agent.id)}
-                          onChange={() =>
-                            setSelectedAgentIds((prev) =>
-                              prev.includes(agent.id) ? prev.filter((id) => id !== agent.id) : [...prev, agent.id]
-                            )
-                          }
-                          className="rounded"
-                        />
-                        <span className="text-sm text-gray-900 dark:text-white">
-                          {agent.name} ({agent.type})
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-gray-500">暂无启用的Agent，请先在配置页面添加</div>
-                )}
-              </div>
+      {/* Multi-Select Modal */}
+      <Modal
+        title="多选一 AI分析"
+        open={showMultiModal}
+        onCancel={() => {
+          setShowMultiModal(false);
+          setMultiError(null);
+        }}
+        footer={
+          <Button
+            type="primary"
+            block
+            onClick={handleStartMulti}
+            style={{ backgroundColor: '#722ed1', borderColor: '#722ed1' }}
+          >
+            启动多选一分析
+          </Button>
+        }
+        width={640}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Typography.Text type="secondary">
+            本模式要求从所选股票中<strong>必须选择一只</strong>进行买入决策。
+          </Typography.Text>
 
-              {multiError && (
-                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 text-red-700 dark:text-red-400 text-sm">
-                  {multiError}
-                </div>
-              )}
-
-              <button
-                onClick={handleStartMulti}
-                className="w-full px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all font-semibold"
-              >
-                启动多选一分析
-              </button>
-            </div>
+          {/* Mode Selection */}
+          <div>
+            <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
+              选择模式
+            </Typography.Text>
+            <Segmented
+              value={multiMode}
+              onChange={(val) => setMultiMode(val as MultiMode)}
+              options={[
+                { label: '快速模式\n思考1 / 辩论1', value: 'fast' },
+                { label: '均衡模式\n思考2 / 辩论1', value: 'balanced' },
+                { label: '深入模式\n思考3 / 辩论2', value: 'deep' },
+              ]}
+              block
+            />
           </div>
-        </div>
-      )}
-    </div>
+
+          {/* Agent Selection */}
+          <div>
+            <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
+              选择参与辩论的Agent（至少2个）
+            </Typography.Text>
+            {agentsLoading ? (
+              <Spin />
+            ) : agents && agents.length > 0 ? (
+              <Space direction="vertical" style={{ width: '100%' }}>
+                {agents.map((agent: Agent) => (
+                  <Checkbox
+                    key={agent.id}
+                    checked={selectedAgentIds.includes(agent.id)}
+                    onChange={() =>
+                      setSelectedAgentIds((prev) =>
+                        prev.includes(agent.id) ? prev.filter((id) => id !== agent.id) : [...prev, agent.id]
+                      )
+                    }
+                  >
+                    {agent.name} ({agent.type})
+                  </Checkbox>
+                ))}
+              </Space>
+            ) : (
+              <Typography.Text type="secondary">暂无启用的Agent，请先在配置页面添加</Typography.Text>
+            )}
+          </div>
+
+          {multiError && <Alert type="error" message={multiError} showIcon />}
+        </Space>
+      </Modal>
+    </Space>
   );
 }
 
-function WatchlistItem({
-  item,
-  onRemove,
-  selected,
-  onToggleSelect,
-  editPosition,
-  editCost,
-  editShares,
-  setEditPosition,
-  setEditCost,
-  setEditShares,
-  onSavePosition,
-}: {
-  item: any;
-  onRemove: () => void;
-  selected: boolean;
-  onToggleSelect: () => void;
-  editPosition: string | null;
-  editCost: string;
-  editShares: string;
-  setEditPosition: (code: string | null) => void;
-  setEditCost: (val: string) => void;
-  setEditShares: (val: string) => void;
-  onSavePosition: (code: string) => void;
-}) {
-  // 获取实时行情数据
+// ---------- Inline table cell components ----------
+
+function WatchlistPriceCell({ code }: { code: string }) {
   const { data: realtimeData, isLoading } = useQuery({
-    queryKey: ['realtime', item.code],
-    queryFn: () => stockAPI.getRealtime(item.code),
+    queryKey: ['realtime', code],
+    queryFn: () => stockAPI.getRealtime(code),
     refetchInterval: getRefetchInterval(),
-    enabled: !!item.code,
+    enabled: !!code,
   });
 
-  const changePercent = (realtimeData?.current_price && realtimeData?.current_price > 0 && realtimeData?.change_percent != null)
-    ? realtimeData.change_percent : 0;
-  const changeValue = realtimeData?.current_price && realtimeData?.current_price > 0 && realtimeData?.yesterday_close
-    ? realtimeData.current_price - realtimeData.yesterday_close
-    : 0;
-  const isUp = changePercent >= 0;
-
-  // 计算持仓盈亏
-  const costPrice = item.cost_price;
-  const shares = item.shares;
-  const hasPosition = costPrice != null && shares != null && shares > 0;
-  const positionValue = hasPosition ? (realtimeData?.current_price ?? 0) * shares! : 0;
-  const positionCost = hasPosition ? costPrice! * shares! : 0;
-  const positionPnl = positionValue - positionCost;
-  const positionPnlPercent = costPrice && costPrice > 0 ? ((realtimeData?.current_price ?? 0) - costPrice) / costPrice * 100 : 0;
-
+  if (isLoading) return <Spin size="small" />;
+  if (!realtimeData || realtimeData.current_price == null || realtimeData.current_price <= 0) {
+    return <span style={{ color: '#999' }}>--</span>;
+  }
+  const isUp = (realtimeData.change_percent ?? 0) >= 0;
   return (
-    <div className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-      <div className="mr-3">
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={(e) => {
-            e.stopPropagation();
-            onToggleSelect();
-          }}
-          className="rounded"
-        />
+    <span style={{ fontWeight: 700, color: isUp ? '#cf1322' : '#3f8600', fontSize: 16 }}>
+      {realtimeData.current_price.toFixed(2)}
+    </span>
+  );
+}
+
+function WatchlistChangeCell({ code }: { code: string }) {
+  const { data: realtimeData, isLoading } = useQuery({
+    queryKey: ['realtime', code],
+    queryFn: () => stockAPI.getRealtime(code),
+    refetchInterval: getRefetchInterval(),
+    enabled: !!code,
+  });
+
+  if (isLoading) return <Spin size="small" />;
+  if (!realtimeData || realtimeData.current_price == null || realtimeData.current_price <= 0) {
+    return <span style={{ color: '#999' }}>--</span>;
+  }
+  const changePercent = realtimeData.change_percent ?? 0;
+  const changeValue = realtimeData.current_price - (realtimeData.yesterday_close ?? 0);
+  const isUp = changePercent >= 0;
+  const color = isUp ? '#cf1322' : '#3f8600';
+  return (
+    <div>
+      <div style={{ fontWeight: 600, color, fontSize: 14 }}>
+        {isUp ? '+' : ''}{changePercent.toFixed(2)}%
       </div>
-      <Link to={`/stock/${item.code}`} className="flex-1 flex items-center justify-between">
-        <div className="flex-1">
-          <div className="font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400">
-            {item.name || item.code}
-          </div>
-          <div className="text-sm text-gray-500 dark:text-gray-400">{item.code}</div>
-          {hasPosition && (
-            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              成本{costPrice!.toFixed(2)} × {shares!.toLocaleString()}股
-            </div>
-          )}
-        </div>
-
-        {/* 实时行情信息 */}
-        {isLoading ? (
-          <div className="text-gray-400 text-sm">加载中...</div>
-        ) : realtimeData && realtimeData.current_price != null && realtimeData.current_price > 0 ? (
-          <div className="flex items-center gap-6 text-right">
-            {hasPosition && (
-              <div className="text-right">
-                <div className={`text-sm font-bold ${positionPnl >= 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
-                  {positionPnl >= 0 ? '+' : ''}{positionPnl.toFixed(2)}
-                </div>
-                <div className={`text-xs ${positionPnlPercent >= 0 ? 'text-red-500 dark:text-red-500' : 'text-green-500 dark:text-green-500'}`}>
-                  {positionPnlPercent >= 0 ? '+' : ''}{positionPnlPercent.toFixed(2)}%
-                </div>
-              </div>
-            )}
-            <div>
-              <div className={`text-lg font-bold ${isUp ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
-                {realtimeData.current_price != null && realtimeData.current_price > 0 ? realtimeData.current_price.toFixed(2) : '--'}
-              </div>
-            </div>
-            <div>
-              <div className={`text-sm font-semibold ${isUp ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
-                {isUp ? '+' : ''}{changePercent.toFixed(2)}%
-              </div>
-              <div className={`text-xs ${isUp ? 'text-red-500 dark:text-red-500' : 'text-green-500 dark:text-green-500'}`}>
-                {isUp ? '+' : ''}{changeValue.toFixed(2)}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="text-gray-400 text-sm">--</div>
-        )}
-      </Link>
-
-      <div className="ml-4 flex items-center gap-2">
-        <AIAnalyzeButton code={item.code} className="text-sm px-3 py-1.5" />
-        {!hasPosition ? (
-          <button
-            onClick={(e) => {
-              e.preventDefault();
-              setEditPosition(item.code);
-              setEditCost('');
-              setEditShares('');
-            }}
-            className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
-          >
-            设置持仓
-          </button>
-        ) : (
-          <button
-            onClick={(e) => {
-              e.preventDefault();
-              setEditPosition(item.code);
-              setEditCost(item.cost_price?.toString() || '');
-              setEditShares(item.shares?.toString() || '');
-            }}
-            className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
-          >
-            编辑持仓
-          </button>
-        )}
-        <button
-          onClick={(e) => {
-            e.preventDefault();
-            onRemove();
-          }}
-          className="px-4 py-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-        >
-          删除
-        </button>
+      <div style={{ fontSize: 12, color }}>
+        {isUp ? '+' : ''}{changeValue.toFixed(2)}
       </div>
-
-      {/* 持仓编辑弹窗 */}
-      {editPosition === item.code && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={() => setEditPosition(null)}>
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">编辑持仓 - {item.name || item.code}</h3>
-            <div className="space-y-3">
-              <input
-                type="number"
-                value={editCost}
-                onChange={(e) => setEditCost(e.target.value)}
-                placeholder="持仓成本价（元）"
-                step="0.01"
-                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              />
-              <input
-                type="number"
-                value={editShares}
-                onChange={(e) => setEditShares(e.target.value)}
-                placeholder="持股数量（股）"
-                step="100"
-                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              />
-              <div className="flex gap-2 pt-2">
-                <button
-                  onClick={() => setEditPosition(null)}
-                  className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={() => onSavePosition(item.code)}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  保存
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
+function WatchlistPnlCell({
+  code,
+  costPrice,
+  shares,
+}: {
+  code: string;
+  costPrice?: number | null;
+  shares?: number | null;
+}) {
+  const { data: realtimeData, isLoading } = useQuery({
+    queryKey: ['realtime', code],
+    queryFn: () => stockAPI.getRealtime(code),
+    refetchInterval: getRefetchInterval(),
+    enabled: !!code,
+  });
+
+  const hasPosition = costPrice != null && shares != null && shares > 0;
+
+  if (!hasPosition) return <span style={{ color: '#ccc' }}>--</span>;
+  if (isLoading) return <Spin size="small" />;
+
+  const currentPrice = realtimeData?.current_price ?? 0;
+  const positionValue = currentPrice * shares!;
+  const positionCost = costPrice! * shares!;
+  const positionPnl = positionValue - positionCost;
+  const positionPnlPercent = costPrice! > 0 ? ((currentPrice - costPrice!) / costPrice!) * 100 : 0;
+
+  const isUp = positionPnl >= 0;
+  const color = isUp ? '#cf1322' : '#3f8600';
+
+  return (
+    <div style={{ textAlign: 'right' }}>
+      <div style={{ fontWeight: 700, color, fontSize: 14 }}>
+        {isUp ? '+' : ''}{positionPnl.toFixed(2)}
+      </div>
+      <div style={{ fontSize: 12, color }}>
+        {isUp ? '+' : ''}{positionPnlPercent.toFixed(2)}%
+      </div>
+    </div>
+  );
+}
