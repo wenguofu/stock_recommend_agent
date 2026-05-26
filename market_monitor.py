@@ -377,12 +377,12 @@ def _save_alert_log(date_str: str, level: str, score: int, signals: list):
 # B0: Market Breadth — 硬性标准 (涨跌停家数)
 # ═══════════════════════════════════════════════════════
 
-LIMIT_UP_THRESHOLD = 50   # 涨停<50 → 市场偏弱
-LIMIT_DOWN_THRESHOLD = 50  # 跌停>50 → 恐慌信号
+LIMIT_DOWN_THRESHOLD = 50   # 跌停>50 → 恐慌信号
+STRONG_STOCK_THRESHOLD = 50  # 涨幅>8% <50 → 市场弱
 
 
-def _score_breadth(limit_up: int, limit_down: int) -> dict:
-    """根据涨跌停家数计算风险分数（纯函数，方便测试）"""
+def _score_breadth(strong_count: int, limit_down: int) -> dict:
+    """根据涨幅>8%家数和跌停家数计算风险分数（纯函数）"""
     score = 0
     signals = []
     
@@ -390,20 +390,20 @@ def _score_breadth(limit_up: int, limit_down: int) -> dict:
         score += 15
         signals.append(f'跌停{limit_down}只(>{LIMIT_DOWN_THRESHOLD})，恐慌抛售信号')
     
-    if limit_up < LIMIT_UP_THRESHOLD:
+    if strong_count < STRONG_STOCK_THRESHOLD:
         score += 15
-        signals.append(f'涨停仅{limit_up}只(<{LIMIT_UP_THRESHOLD})，市场做多意愿弱')
+        signals.append(f'涨幅>8%仅{strong_count}只(<{STRONG_STOCK_THRESHOLD})，市场做多意愿弱')
     
     return {
-        'score': min(score, 25),  # 封顶25
+        'score': min(score, 25),
         'signals': signals,
-        'limit_up_count': limit_up,
+        'strong_count': strong_count,
         'limit_down_count': limit_down,
     }
 
 
 def check_market_breadth(date_str: str = None) -> dict:
-    """获取今日涨跌停家数，计算市场宽度风险分数"""
+    """获取今日涨幅>8%家数+跌停家数，计算市场宽度风险"""
     from datetime import datetime
     
     if date_str is None:
@@ -411,18 +411,20 @@ def check_market_breadth(date_str: str = None) -> dict:
     
     try:
         import akshare as ak
-        zt = ak.stock_zt_pool_em(date=date_str)
+        strong = ak.stock_zt_pool_strong_em(date=date_str)
         dt = ak.stock_zt_pool_dtgc_em(date=date_str)
-        limit_up = len(zt)
+        
+        strong_count = len(strong[strong['涨跌幅'] > 8]) if '涨跌幅' in strong.columns else len(strong)
         limit_down = len(dt)
-        result = _score_breadth(limit_up, limit_down)
+        
+        result = _score_breadth(strong_count, limit_down)
         result['date'] = date_str
         return result
     except Exception as e:
         return {
             'score': 0,
             'signals': [f'涨跌停数据获取失败: {e}'],
-            'limit_up_count': None,
+            'strong_count': None,
             'limit_down_count': None,
             'date': date_str,
         }
