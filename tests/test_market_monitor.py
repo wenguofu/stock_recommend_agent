@@ -509,3 +509,47 @@ def test_full_monitor_empty_df():
         result = full_monitor(code='sh000001')
     assert result is not None
     assert 'error' in result or result['warning_level'] == 'normal'
+
+
+# ═══════════════════════════════════════════════════════
+# B0: Market Breadth — 硬性标准 (涨跌停家数)
+# ═══════════════════════════════════════════════════════
+
+def test_market_breadth_many_limit_down():
+    """跌停>50 → score 15"""
+    from market_monitor import _score_breadth
+    result = _score_breadth(limit_up=100, limit_down=55)
+    assert result['score'] >= 15
+    assert any('跌停' in s for s in result['signals'])
+
+
+def test_market_breadth_few_limit_up():
+    """涨停<50 → score 15"""
+    from market_monitor import _score_breadth
+    result = _score_breadth(limit_up=30, limit_down=5)
+    assert result['score'] >= 15
+    assert any('涨停' in s for s in result['signals'])
+
+
+def test_market_breadth_both_extreme():
+    """跌停>50 且 涨停<50 → score 25"""
+    from market_monitor import _score_breadth
+    result = _score_breadth(limit_up=20, limit_down=60)
+    assert result['score'] == 25
+    assert len(result['signals']) >= 2
+
+
+def test_market_breadth_normal():
+    """正常市场 → score 0"""
+    from market_monitor import _score_breadth
+    result = _score_breadth(limit_up=80, limit_down=10)
+    assert result['score'] == 0
+    assert len(result['signals']) == 0
+
+
+def test_market_breadth_returns_counts():
+    """返回包含涨跌停家数"""
+    from market_monitor import _score_breadth
+    result = _score_breadth(limit_up=45, limit_down=15)
+    assert result['limit_up_count'] == 45
+    assert result['limit_down_count'] == 15

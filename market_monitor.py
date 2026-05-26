@@ -304,6 +304,61 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(dot / (norm_a * norm_b))
 
 
+# ═══════════════════════════════════════════════════════
+# B0: Market Breadth — 硬性标准 (涨跌停家数)
+# ═══════════════════════════════════════════════════════
+
+LIMIT_UP_THRESHOLD = 50   # 涨停<50 → 市场偏弱
+LIMIT_DOWN_THRESHOLD = 50  # 跌停>50 → 恐慌信号
+
+
+def _score_breadth(limit_up: int, limit_down: int) -> dict:
+    """根据涨跌停家数计算风险分数（纯函数，方便测试）"""
+    score = 0
+    signals = []
+    
+    if limit_down > LIMIT_DOWN_THRESHOLD:
+        score += 15
+        signals.append(f'跌停{limit_down}只(>{LIMIT_DOWN_THRESHOLD})，恐慌抛售信号')
+    
+    if limit_up < LIMIT_UP_THRESHOLD:
+        score += 15
+        signals.append(f'涨停仅{limit_up}只(<{LIMIT_UP_THRESHOLD})，市场做多意愿弱')
+    
+    return {
+        'score': min(score, 25),  # 封顶25
+        'signals': signals,
+        'limit_up_count': limit_up,
+        'limit_down_count': limit_down,
+    }
+
+
+def check_market_breadth(date_str: str = None) -> dict:
+    """获取今日涨跌停家数，计算市场宽度风险分数"""
+    from datetime import datetime
+    
+    if date_str is None:
+        date_str = datetime.now().strftime('%Y%m%d')
+    
+    try:
+        import akshare as ak
+        zt = ak.stock_zt_pool_em(date=date_str)
+        dt = ak.stock_zt_pool_dtgc_em(date=date_str)
+        limit_up = len(zt)
+        limit_down = len(dt)
+        result = _score_breadth(limit_up, limit_down)
+        result['date'] = date_str
+        return result
+    except Exception as e:
+        return {
+            'score': 0,
+            'signals': [f'涨跌停数据获取失败: {e}'],
+            'limit_up_count': None,
+            'limit_down_count': None,
+            'date': date_str,
+        }
+
+
 def find_similar_patterns(df: pd.DataFrame, window: int = 20, top_k: int = 3) -> list:
     """查找相似历史形态。
 
@@ -383,6 +438,7 @@ def full_monitor(code: str = 'sh000001') -> dict:
         }
 
     # Run all checks
+    breadth_check = check_market_breadth()
     adx_check = check_adx_trend(df)
     ma_check = check_ma_pattern(df)
     macd_check = check_macd_divergence(df)
@@ -390,6 +446,7 @@ def full_monitor(code: str = 'sh000001') -> dict:
     momentum_check = check_momentum_rsi(df)
 
     checks = {
+        'breadth': breadth_check,
         'adx': adx_check,
         'ma': ma_check,
         'macd': macd_check,
