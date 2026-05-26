@@ -2,7 +2,32 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { stockAPI } from '../services/api';
 import { Link, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import LoadingSpinner from '../components/LoadingSpinner';
+import {
+  Card,
+  Button,
+  Space,
+  Typography,
+  Spin,
+  Alert,
+  Empty,
+  Table,
+  Tag,
+  Modal,
+  Select,
+  Segmented,
+  Checkbox,
+  message,
+} from 'antd';
+import {
+  ReloadOutlined,
+  WarningOutlined,
+  FireOutlined,
+  DiamondOutlined,
+  RocketOutlined,
+  PlusOutlined,
+} from '@ant-design/icons';
+
+const { Title, Text } = Typography;
 
 interface StrategyStock {
   code: string;
@@ -35,9 +60,9 @@ interface StrongStocksResponse {
 const TIME_OPTIONS = ['09:30','09:45','10:00','10:15','10:30','10:45','11:00','11:15','11:30','13:00','13:30','14:00','14:30','15:00'];
 
 const STRATEGY_TABS = [
-  { key: 'strong_stocks', label: '强势股接力', color: 'from-blue-500 to-blue-700', bg: 'bg-blue-600/50', icon: '🔥' },
-  { key: 'tenbagger', label: '十倍潜力股', color: 'from-purple-500 to-purple-700', bg: 'bg-purple-600/50', icon: '💎' },
-  { key: 'breakout', label: '突破形态', color: 'from-orange-500 to-orange-700', bg: 'bg-orange-600/50', icon: '🚀' },
+  { key: 'strong_stocks', label: '强势股接力', color: '#1677ff', icon: <FireOutlined /> },
+  { key: 'tenbagger', label: '十倍潜力股', color: '#722ed1', icon: <DiamondOutlined /> },
+  { key: 'breakout', label: '突破形态', color: '#fa8c16', icon: <RocketOutlined /> },
 ];
 
 export default function StrategyRecommend() {
@@ -58,7 +83,7 @@ export default function StrategyRecommend() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
-  // Strong stocks (real data from akshare)
+  // Strong stocks
   const { data: strongData, isLoading: strongLoading, error: strongError, refetch: strongRefetch, isFetching: strongFetching } = useQuery<StrongStocksResponse>({
     queryKey: ['strong-stocks', limitTime],
     queryFn: () => stockAPI.getStrongStocks(limitTime),
@@ -106,7 +131,6 @@ export default function StrategyRecommend() {
     }
   }, [showPaperModal, paperAccounts, selectedPaperAccountId]);
 
-  // Get active strategy data
   const activeStrategy = ((): StrategyData | null => {
     if (activeTab === 'strong_stocks' && strongData) {
       return {
@@ -133,7 +157,6 @@ export default function StrategyRecommend() {
   const refetch = activeTab === 'strong_stocks' ? strongRefetch : recRefetch;
   const stocks = activeStrategy?.stocks || [];
 
-  // Helpers
   const formatNumber = (n: number|null|undefined) => {
     if (n==null) return '-';
     if (n>=1e8) return (n/1e8).toFixed(2)+'亿';
@@ -152,7 +175,7 @@ export default function StrategyRecommend() {
     if (addingMap[code]) return;
     setAddingMap(p=>({...p,[code]:true}));
     try { await stockAPI.addWatchlist(code, name); setAddedMap(p=>({...p,[code]:true})); }
-    catch { alert('加入自选失败'); }
+    catch { message.error('加入自选失败'); }
     finally { setAddingMap(p=>({...p,[code]:false})); }
   };
   const handleOpenMulti = () => {
@@ -186,225 +209,313 @@ export default function StrategyRecommend() {
 
   const tab = STRATEGY_TABS.find(t=>t.key===activeTab) || STRATEGY_TABS[0];
 
+  // Build table columns based on active tab
+  const buildColumns = () => {
+    const baseCols: any[] = [
+      {
+        title: '',
+        dataIndex: 'code',
+        key: 'select',
+        width: 50,
+        render: (_: any, record: StrategyStock) => (
+          <Checkbox checked={selectedCodes.includes(record.code)} onChange={() => toggleSelect(record.code)} />
+        ),
+      },
+      {
+        title: '代码',
+        dataIndex: 'code',
+        key: 'code',
+        width: 100,
+        render: (code: string) => <Text code style={{ fontWeight: 500 }}>{code}</Text>,
+      },
+      {
+        title: '名称',
+        dataIndex: 'name',
+        key: 'name',
+        ellipsis: true,
+        render: (name: string) => name || '-',
+      },
+    ];
+
+    if (activeTab === 'strong_stocks') {
+      baseCols.push(
+        { title: '行业', dataIndex: 'industry', key: 'industry', render: (v: string) => v || '-' },
+        { title: 'T-1', dataIndex: 't1_limit_time', key: 't1', render: (v: string) => formatTime(v) },
+        { title: 'T-2', dataIndex: 't2_limit_time', key: 't2', render: (v: string) => formatTime(v) },
+        {
+          title: '连板', dataIndex: 'consecutive_days', key: 'consecutive',
+          render: (v: number) => (v ?? 0) > 0 ? <Tag color="red">{v}连板</Tag> : '-',
+        },
+        {
+          title: '炸板', dataIndex: 'break_count', key: 'break',
+          render: (v: number) => (v ?? 0) > 0 ? <Tag color="gold">{v}次</Tag> : '-',
+        },
+      );
+    }
+
+    if (activeTab === 'tenbagger') {
+      baseCols.push(
+        {
+          title: '评分', dataIndex: 'score', key: 'score', align: 'right' as const,
+          render: (v: number) => <Text strong style={{ color: v >= 80 ? '#ff4d4f' : v >= 65 ? '#fa8c16' : '#8c8c8c' }}>{v}</Text>,
+        },
+        { title: 'ROE', dataIndex: 'roe', key: 'roe', align: 'right' as const, render: (v: number) => v != null ? `${v}%` : '-' },
+        { title: '毛利', dataIndex: 'gross_margin', key: 'margin', align: 'right' as const, render: (v: number) => v != null ? `${v}%` : '-' },
+        {
+          title: '60日', dataIndex: 'ret_60d', key: 'ret60', align: 'right' as const,
+          render: (v: number) => <Text style={{ color: (v ?? 0) >= 0 ? '#ff4d4f' : '#52c41a' }}>{(v ?? 0) > 0 ? '+' : ''}{v != null ? `${v}%` : '-'}</Text>,
+        },
+      );
+    }
+
+    if (activeTab === 'breakout') {
+      baseCols.push(
+        {
+          title: '评分', dataIndex: 'score', key: 'score', align: 'right' as const,
+          render: (v: number) => <Text strong style={{ color: v >= 80 ? '#ff4d4f' : v >= 65 ? '#fa8c16' : '#8c8c8c' }}>{v}</Text>,
+        },
+        { title: '突破%', dataIndex: 'break_pct', key: 'breakpct', align: 'right' as const, render: (v: number) => v != null ? <Text style={{ color: '#ff4d4f' }}>{v}%</Text> : '-' },
+        { title: '量比', dataIndex: 'vol_ratio', key: 'vol', align: 'right' as const, render: (v: number) => v != null ? `${v}x` : '-' },
+        { title: 'RSI', dataIndex: 'rsi', key: 'rsi', align: 'right' as const, render: (v: number) => v != null ? v : '-' },
+      );
+    }
+
+    baseCols.push(
+      {
+        title: '现价', dataIndex: 'current_price', key: 'price', align: 'right' as const, width: 90,
+        render: (_: any, record: StrategyStock) => {
+          const p = record.current_price ?? record.price;
+          return p != null ? `¥${p.toFixed(2)}` : '-';
+        },
+      },
+      {
+        title: '操作', key: 'actions', width: 200,
+        render: (_: any, record: StrategyStock) => (
+          <Space size={4}>
+            <Link to={`/stock/${record.code}`}>
+              <Button size="small" type="primary">详情</Button>
+            </Link>
+            <Button
+              size="small"
+              style={{ backgroundColor: '#10b981', borderColor: '#10b981', color: '#fff' }}
+              disabled={addingMap[record.code] || addedMap[record.code]}
+              onClick={() => handleAddWatchlist(record.code, record.name || record.code)}
+            >
+              {addedMap[record.code] ? '已加' : addingMap[record.code] ? '...' : '加自选'}
+            </Button>
+            <Button
+              size="small"
+              style={{ backgroundColor: '#fa8c16', borderColor: '#fa8c16', color: '#fff' }}
+              icon={<PlusOutlined />}
+              onClick={() => handleOpenPaper(record)}
+            >
+              计划
+            </Button>
+          </Space>
+        ),
+      },
+    );
+
+    return baseCols;
+  };
+
   return (
-    <div className="px-4 sm:px-6 lg:px-8">
+    <Space direction="vertical" size="large" style={{ width: '100%', padding: '0 24px' }}>
       {/* Strategy tabs */}
-      <div className="flex gap-2 mb-6">
-        {STRATEGY_TABS.map(t => (
-          <button key={t.key} onClick={()=>{setActiveTab(t.key);setSelectedCodes([]);}}
-            className={`flex-1 py-3 px-4 rounded-xl text-sm font-bold transition-all ${
-              activeTab===t.key
-                ? `bg-gradient-to-r ${t.color} text-white shadow-lg scale-105`
-                : 'bg-gray-100 dark:bg-gray-800 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-            }`}>
-            {t.icon} {t.label}
-          </button>
-        ))}
-      </div>
+      <Segmented
+        block
+        size="large"
+        value={activeTab}
+        onChange={(val) => { setActiveTab(val as string); setSelectedCodes([]); }}
+        options={STRATEGY_TABS.map(t => ({
+          label: <span>{t.icon} {t.label}</span>,
+          value: t.key,
+        }))}
+        style={{ backgroundColor: '#f5f5f5' }}
+      />
 
       {/* Strategy info card */}
-      <div className={`bg-gradient-to-r ${tab.color} rounded-xl p-6 text-white shadow-lg mb-6`}>
-        <div className="flex items-center justify-between">
+      <Card
+        style={{
+          background: `linear-gradient(135deg, ${tab.color} 0%, ${tab.color}dd 100%)`,
+          border: 'none',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h2 className="text-2xl font-bold">{tab.icon} {tab.label}</h2>
-            <p className="text-sm opacity-80 mt-1">{activeStrategy?.description || '加载中...'}</p>
+            <Title level={3} style={{ color: '#fff', margin: 0 }}>
+              {STRATEGY_TABS.find(t => t.key === activeTab)?.icon} {tab.label}
+            </Title>
+            <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 14 }}>
+              {activeStrategy?.description || '加载中...'}
+            </Text>
           </div>
-          <div className="text-right">
-            <div className="text-4xl font-bold">{activeStrategy?.count ?? '-'}</div>
-            <div className="text-sm opacity-80">符合条件</div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ color: '#fff', fontSize: 48, fontWeight: 'bold', lineHeight: 1 }}>
+              {activeStrategy?.count ?? '-'}
+            </div>
+            <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 14 }}>符合条件</Text>
           </div>
         </div>
         {activeTab === 'strong_stocks' && (
-          <div className="mt-4 p-3 bg-white/10 rounded-lg flex items-center gap-3 text-sm">
-            <span>涨停截止:</span>
-            <select value={limitTime} onChange={e=>setLimitTime(e.target.value)}
-              className="bg-white/20 border border-white/30 rounded px-2 py-1 text-white">
-              {TIME_OPTIONS.map(t=><option key={t} value={t} className="text-gray-900">{t}</option>)}
-            </select>
+          <div style={{
+            marginTop: 16,
+            padding: 12,
+            background: 'rgba(255,255,255,0.1)',
+            borderRadius: 8,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+          }}>
+            <Text style={{ color: '#fff', fontSize: 14 }}>涨停截止:</Text>
+            <Select
+              value={limitTime}
+              onChange={setLimitTime}
+              style={{ width: 100 }}
+              options={TIME_OPTIONS.map(t => ({ label: t, value: t }))}
+              popupMatchSelectWidth={false}
+            />
           </div>
         )}
-      </div>
+      </Card>
 
       {/* Warning */}
-      <div className="mb-4 text-center">
-        <p className="text-sm text-yellow-600 dark:text-yellow-400">⚠️ 固定策略筛选，仅供参考。不构成投资建议。</p>
-      </div>
+      <Alert
+        message="固定策略筛选，仅供参考。不构成投资建议。"
+        type="warning"
+        showIcon
+        icon={<WarningOutlined />}
+        style={{ textAlign: 'center' }}
+      />
 
       {/* Toolbar */}
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">筛选结果 ({stocks.length}只)</h2>
-        <div className="flex items-center gap-3">
-          {selectedCodes.length>=2 && (
-            <button onClick={handleOpenMulti}
-              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Title level={5} style={{ margin: 0 }}>筛选结果 ({stocks.length}只)</Title>
+        <Space>
+          {selectedCodes.length >= 2 && (
+            <Button type="primary" style={{ backgroundColor: '#722ed1', borderColor: '#722ed1' }} onClick={handleOpenMulti}>
               多选一 AI分析 ({selectedCodes.length})
-            </button>
+            </Button>
           )}
-          <button onClick={()=>refetch()} disabled={isFetching}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm disabled:opacity-50">
-            {isFetching?'刷新中...':'刷新'}
-          </button>
-        </div>
+          <Button icon={<ReloadOutlined />} loading={isFetching} onClick={() => refetch()}>
+            {isFetching ? '刷新中...' : '刷新'}
+          </Button>
+        </Space>
       </div>
 
       {/* Content */}
       {isLoading ? (
-        <div className="bg-white dark:bg-gray-800 rounded-lg p-12 flex justify-center">
-          <LoadingSpinner text="加载中..." />
-        </div>
-      ) : error ? (
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 rounded-lg p-4 text-red-600">
-          加载失败: {String(error)}
-          <button onClick={()=>refetch()} className="ml-3 underline">重试</button>
-        </div>
-      ) : stocks.length===0 ? (
-        <div className="text-center py-16 bg-white dark:bg-gray-800 rounded-lg border">
-          <div className="text-4xl mb-3">📭</div>
-          <p className="text-gray-500">当前暂无符合条件的股票</p>
-          <p className="text-xs text-gray-400 mt-1">
-            {activeTab==='strong_stocks'?'非交易时段可能无数据':activeTab==='breakout'?'下跌市中突破信号稀少':'数据加载中，请刷新'}
-          </p>
-        </div>
-      ) : (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border shadow overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <thead className="bg-gray-50 dark:bg-gray-900">
-                <tr>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">勾选</th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">代码</th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">名称</th>
-                  {activeTab==='strong_stocks' && <>
-                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">行业</th>
-                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">T-1</th>
-                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">T-2</th>
-                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">连板</th>
-                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">炸板</th>
-                  </>}
-                  {activeTab==='tenbagger' && <>
-                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">评分</th>
-                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">ROE</th>
-                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">毛利</th>
-                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">60日</th>
-                  </>}
-                  {activeTab==='breakout' && <>
-                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">评分</th>
-                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">突破%</th>
-                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">量比</th>
-                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">RSI</th>
-                  </>}
-                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">现价</th>
-                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                {stocks.map((stock, idx) => (
-                  <tr key={stock.code} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                    <td className="px-3 py-3">
-                      <input type="checkbox" checked={selectedCodes.includes(stock.code)}
-                        onChange={()=>toggleSelect(stock.code)} className="rounded" />
-                    </td>
-                    <td className="px-3 py-3 text-sm font-mono font-medium text-gray-900 dark:text-white">
-                      {stock.code}
-                    </td>
-                    <td className="px-3 py-3 text-sm text-gray-700 dark:text-gray-300">
-                      {stock.name || '-'}
-                    </td>
-                    {activeTab==='strong_stocks' && <>
-                      <td className="px-3 py-3 text-sm text-gray-500">{stock.industry||'-'}</td>
-                      <td className="px-3 py-3 text-sm text-gray-500">{formatTime(stock.t1_limit_time)}</td>
-                      <td className="px-3 py-3 text-sm text-gray-500">{formatTime(stock.t2_limit_time)}</td>
-                      <td className="px-3 py-3 text-sm">{(stock.consecutive_days??0)>0?<span className="px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-700">{stock.consecutive_days}连板</span>:'-'}</td>
-                      <td className="px-3 py-3 text-sm">{(stock.break_count??0)>0?<span className="px-2 py-0.5 text-xs rounded-full bg-yellow-100 text-yellow-700">{stock.break_count}次</span>:'-'}</td>
-                    </>}
-                    {activeTab==='tenbagger' && <>
-                      <td className="px-3 py-3 text-sm text-right"><span className={`font-bold ${stock.score>=80?'text-red-500':stock.score>=65?'text-orange-500':'text-gray-500'}`}>{stock.score}</span></td>
-                      <td className="px-3 py-3 text-sm text-right">{stock.roe!=null?`${stock.roe}%`:'-'}</td>
-                      <td className="px-3 py-3 text-sm text-right">{stock.gross_margin!=null?`${stock.gross_margin}%`:'-'}</td>
-                      <td className="px-3 py-3 text-sm text-right"><span className={(stock.ret_60d??0)>=0?'text-red-500':'text-green-500'}>{(stock.ret_60d??0)>0?'+':''}{stock.ret_60d!=null?`${stock.ret_60d}%`:'-'}</span></td>
-                    </>}
-                    {activeTab==='breakout' && <>
-                      <td className="px-3 py-3 text-sm text-right"><span className={`font-bold ${stock.score>=80?'text-red-500':stock.score>=65?'text-orange-500':'text-gray-500'}`}>{stock.score}</span></td>
-                      <td className="px-3 py-3 text-sm text-right text-red-500">{stock.break_pct!=null?`${stock.break_pct}%`:'-'}</td>
-                      <td className="px-3 py-3 text-sm text-right">{stock.vol_ratio!=null?`${stock.vol_ratio}x`:'-'}</td>
-                      <td className="px-3 py-3 text-sm text-right">{stock.rsi!=null?stock.rsi:'-'}</td>
-                    </>}
-                    <td className="px-3 py-3 text-sm text-right font-medium">
-                      {(stock.current_price??stock.price)!=null?`¥${(stock.current_price??stock.price)!.toFixed(2)}`:'-'}
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="flex gap-1">
-                        <Link to={`/stock/${stock.code}`}
-                          className="px-2 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700">详情</Link>
-                        <button onClick={()=>handleAddWatchlist(stock.code, stock.name||stock.code)}
-                          disabled={addingMap[stock.code]||addedMap[stock.code]}
-                          className="px-2 py-1 text-xs rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
-                          {addedMap[stock.code]?'已加':addingMap[stock.code]?'...':'加自选'}
-                        </button>
-                        <button onClick={()=>handleOpenPaper(stock)}
-                          className="px-2 py-1 text-xs rounded bg-orange-600 text-white hover:bg-orange-700">📋计划</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <Card>
+          <div style={{ textAlign: 'center', padding: 48 }}>
+            <Spin size="large" />
+            <div style={{ marginTop: 16 }}>加载中...</div>
           </div>
-        </div>
+        </Card>
+      ) : error ? (
+        <Alert
+          type="error"
+          message={`加载失败: ${String(error)}`}
+          action={<Button size="small" onClick={() => refetch()}>重试</Button>}
+        />
+      ) : stocks.length === 0 ? (
+        <Card>
+          <Empty
+            description={
+              <>
+                <div style={{ marginBottom: 8 }}>当前暂无符合条件的股票</div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {activeTab === 'strong_stocks' ? '非交易时段可能无数据' : activeTab === 'breakout' ? '下跌市中突破信号稀少' : '数据加载中，请刷新'}
+                </Text>
+              </>
+            }
+          />
+        </Card>
+      ) : (
+        <Card bodyStyle={{ padding: 0 }}>
+          <Table
+            dataSource={stocks}
+            rowKey="code"
+            columns={buildColumns()}
+            pagination={false}
+            size="small"
+            scroll={{ x: 'max-content' }}
+          />
+        </Card>
       )}
 
       {/* Multi-select modal */}
-      {showMultiModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between p-4 border-b">
-              <h2 className="text-lg font-bold">多选一 AI分析</h2>
-              <button onClick={()=>{setShowMultiModal(false);setMultiError(null);}} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+      <Modal
+        title="多选一 AI分析"
+        open={showMultiModal}
+        onCancel={() => { setShowMultiModal(false); setMultiError(null); }}
+        footer={null}
+        width={640}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Text type="secondary">已选: {selectedCodes.join(', ')}</Text>
+          <Segmented
+            block
+            value={multiMode}
+            onChange={(v) => setMultiMode(v as 'fast'|'balanced'|'deep')}
+            options={[
+              { label: '快速(1+1)', value: 'fast' },
+              { label: '均衡(2+1)', value: 'balanced' },
+              { label: '深入(3+2)', value: 'deep' },
+            ]}
+          />
+          {agents && agents.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+              {agents.map((a: any) => (
+                <Checkbox
+                  key={a.id}
+                  checked={selectedAgentIds.includes(a.id)}
+                  onChange={() => setSelectedAgentIds(p => p.includes(a.id) ? p.filter(i => i !== a.id) : [...p, a.id])}
+                >
+                  {a.name}
+                </Checkbox>
+              ))}
             </div>
-            <div className="p-4 space-y-3 overflow-y-auto">
-              <div className="text-sm text-gray-500">已选: {selectedCodes.join(', ')}</div>
-              <div className="flex gap-2">
-                {(['fast','balanced','deep'] as const).map(m=>(
-                  <button key={m} onClick={()=>setMultiMode(m)}
-                    className={`flex-1 py-2 rounded text-sm border ${multiMode===m?'border-purple-600 bg-purple-50 text-purple-700':'border-gray-200'}`}>
-                    {m==='fast'?'快速(1+1)':m==='balanced'?'均衡(2+1)':'深入(3+2)'}
-                  </button>
-                ))}
-              </div>
-              {agents?.length>0 && (
-                <div className="grid grid-cols-2 gap-1">
-                  {agents.map((a:any)=>(<label key={a.id} className="flex items-center gap-1 text-sm p-1"><input type="checkbox" checked={selectedAgentIds.includes(a.id)} onChange={()=>setSelectedAgentIds(p=>p.includes(a.id)?p.filter(i=>i!==a.id):[...p,a.id])} />{a.name}</label>))}
-                </div>
-              )}
-              {multiError && <div className="text-red-500 text-sm">{multiError}</div>}
-              <button onClick={handleStartMulti} className="w-full py-2 bg-purple-600 text-white rounded font-medium hover:bg-purple-700">启动分析</button>
-            </div>
-          </div>
-        </div>
-      )}
+          )}
+          {multiError && <Text type="danger">{multiError}</Text>}
+          <Button type="primary" block onClick={handleStartMulti} style={{ backgroundColor: '#722ed1', borderColor: '#722ed1' }}>
+            启动分析
+          </Button>
+        </Space>
+      </Modal>
 
       {/* Paper modal */}
-      {showPaperModal && paperTargetStock && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-sm w-full p-4 space-y-3">
-            <h2 className="font-bold">添加模拟盘计划 - {paperTargetStock.name}</h2>
-            <div className="text-sm text-gray-500">现价: ¥{paperTargetStock.currentPrice?.toFixed(2)||'未知'}</div>
-            <select value={selectedPaperAccountId??''} onChange={e=>setSelectedPaperAccountId(Number(e.target.value))}
-              className="w-full border rounded px-3 py-2 text-sm dark:bg-gray-700">
-              <option value="">选择账户</option>
-              {paperAccounts?.map((a:any)=><option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-            {paperError && <div className="text-red-500 text-sm">{paperError}</div>}
-            <div className="flex gap-2">
-              <button onClick={()=>setShowPaperModal(false)} className="flex-1 py-2 border rounded text-sm">取消</button>
-              <button onClick={handleSubmitPaper} disabled={paperLoading}
-                className="flex-1 py-2 bg-orange-600 text-white rounded text-sm hover:bg-orange-700 disabled:opacity-50">
-                {paperLoading?'创建中...':'创建计划'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+      <Modal
+        title={paperTargetStock ? `添加模拟盘计划 - ${paperTargetStock.name}` : '添加模拟盘计划'}
+        open={showPaperModal}
+        onCancel={() => setShowPaperModal(false)}
+        footer={null}
+        width={400}
+      >
+        {paperTargetStock && (
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <Text type="secondary">现价: ¥{paperTargetStock.currentPrice?.toFixed(2) || '未知'}</Text>
+            <Select
+              value={selectedPaperAccountId}
+              onChange={setSelectedPaperAccountId}
+              style={{ width: '100%' }}
+              placeholder="选择账户"
+              options={paperAccounts?.map((a: any) => ({ label: a.name, value: a.id })) || []}
+            />
+            {paperError && <Text type="danger">{paperError}</Text>}
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => setShowPaperModal(false)}>取消</Button>
+              <Button
+                type="primary"
+                loading={paperLoading}
+                onClick={handleSubmitPaper}
+                style={{ backgroundColor: '#fa8c16', borderColor: '#fa8c16' }}
+              >
+                {paperLoading ? '创建中...' : '创建计划'}
+              </Button>
+            </Space>
+          </Space>
+        )}
+      </Modal>
+    </Space>
   );
 }

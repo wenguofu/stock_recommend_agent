@@ -3,6 +3,34 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import TradeModal from "../components/TradeModal";
 import { createChart, ColorType } from "lightweight-charts";
+import {
+  Card,
+  Button,
+  Table,
+  Tag,
+  Statistic,
+  Modal,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Spin,
+  Typography,
+  Space,
+  Row,
+  Col,
+  Pagination,
+  message,
+} from "antd";
+import {
+  ArrowLeftOutlined,
+  PlusOutlined,
+  CameraOutlined,
+  EditOutlined,
+  CloseCircleOutlined,
+} from "@ant-design/icons";
+
+const { Title, Text } = Typography;
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:35000";
 
@@ -51,6 +79,11 @@ function fmtPct(v: number | null): string {
   return (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
 }
 
+const DIRECTION_OPTIONS = [
+  { label: "买入", value: "buy" },
+  { label: "卖出", value: "sell" },
+];
+
 export default function PaperDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -65,6 +98,8 @@ export default function PaperDetail() {
   const [planDirection, setPlanDirection] = useState("buy");
   const [planTargetPrice, setPlanTargetPrice] = useState("");
   const [planReason, setPlanReason] = useState("");
+  const [planForm] = Form.useForm();
+  const [intervalForm] = Form.useForm();
   const accountId = parseInt(id || "0");
 
   const { data: summary, isLoading: summaryLoading } = useQuery({
@@ -131,6 +166,10 @@ export default function PaperDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["paper-curve", accountId] });
       queryClient.invalidateQueries({ queryKey: ["paper-summary", accountId] });
+      message.success("快照已更新");
+    },
+    onError: (err: Error) => {
+      message.error(err.message);
     },
   });
 
@@ -146,6 +185,10 @@ export default function PaperDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["paper-summary", accountId] });
       setEditingInterval(false);
+      message.success("快照间隔已更新");
+    },
+    onError: (err: Error) => {
+      message.error(err.message);
     },
   });
 
@@ -164,6 +207,11 @@ export default function PaperDetail() {
       setPlanDirection("buy");
       setPlanTargetPrice("");
       setPlanReason("");
+      planForm.resetFields();
+      message.success("计划已创建");
+    },
+    onError: (err: Error) => {
+      message.error(err.message);
     },
   });
 
@@ -178,6 +226,10 @@ export default function PaperDetail() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["paper-plans", accountId] });
+      message.success("计划已取消");
+    },
+    onError: (err: Error) => {
+      message.error(err.message);
     },
   });
 
@@ -224,20 +276,21 @@ export default function PaperDetail() {
 
   if (summaryLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full"></div>
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: 256 }}>
+        <Spin size="large" />
       </div>
     );
   }
 
   if (!summary) {
     return (
-      <div className="text-center py-16">
-        <div className="text-6xl mb-4">📭</div>
-        <p className="text-gray-500">模拟盘账户不存在</p>
-        <button onClick={() => navigate("/paper")} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg">
+      <div style={{ textAlign: "center", padding: "64px 0" }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>📭</div>
+        <Text type="secondary">模拟盘账户不存在</Text>
+        <br />
+        <Button type="primary" style={{ marginTop: 16 }} onClick={() => navigate("/paper")}>
           返回模拟盘列表
-        </button>
+        </Button>
       </div>
     );
   }
@@ -253,387 +306,474 @@ export default function PaperDetail() {
     }
   }
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate("/paper")} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{summary.name}</h1>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => snapshotMut.mutate()}
-            disabled={snapshotMut.isPending}
-            className="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50"
-          >
-            {snapshotMut.isPending ? "更新中..." : "📸 更新快照"}
-          </button>
-          <button
-            onClick={() => setShowTrade(true)}
-            className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            + 手动交易
-          </button>
-        </div>
-      </div>
-
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-sm text-gray-500 dark:text-gray-400">总资产</p>
-          <p className="text-xl font-bold text-gray-900 dark:text-white">{formatMoney(totalValue)}</p>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-sm text-gray-500 dark:text-gray-400">可用现金</p>
-          <p className="text-xl font-bold text-gray-900 dark:text-white">{formatMoney(summary.cash_balance)}</p>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-sm text-gray-500 dark:text-gray-400">持仓市值</p>
-          <p className="text-xl font-bold text-gray-900 dark:text-white">{formatMoney(summary.total_market_value)}</p>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-sm text-gray-500 dark:text-gray-400">总收益率</p>
-          <p className={`text-xl font-bold ${summary.total_profit_pct >= 0 ? "text-red-500" : "text-green-500"}`}>
-            {fmtPct(summary.total_profit_pct)}
-          </p>
-        </div>
-      </div>
-
-      {/* Secondary Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-3 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-xs text-gray-500">初始资金</p>
-          <p className="text-sm font-semibold">{formatMoney(summary.initial_capital)}</p>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-3 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-xs text-gray-500">最大回撤</p>
-          <p className="text-sm font-semibold">{fmtPct(summary.max_drawdown)}</p>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-3 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-xs text-gray-500">胜率</p>
-          <p className="text-sm font-semibold">{fmtPct(summary.win_rate)}</p>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-3 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-xs text-gray-500">
-            快照间隔
-            <button onClick={() => { setNewInterval(summary.snapshot_interval); setEditingInterval(true); }} className="ml-1 text-blue-500 hover:text-blue-600">
-              [编辑]
-            </button>
-          </p>
-          <p className="text-sm font-semibold">{summary.snapshot_interval} 分钟</p>
-        </div>
-      </div>
-
-      {/* 待买入计划 */}
-      {(() => {
-        const pendingBuys = plansData?.filter(p => p.direction === 'buy' && p.status === 'pending') || [];
-        if (pendingBuys.length === 0) return null;
-        const totalNeeded = pendingBuys.reduce((s, p) => s + (p.target_price * (p.quantity || 100)), 0);
+  // Position table columns
+  const positionColumns = [
+    {
+      title: "代码",
+      dataIndex: "code",
+      key: "code",
+      render: (code: string, record: Position) => (
+        <Space size={4}>
+          <Link to={`/stock/${code}`}>
+            <Text code>{code}</Text>
+          </Link>
+          {record.etf_replaced && <Tag color="gold">ETF</Tag>}
+        </Space>
+      ),
+    },
+    { title: "名称", dataIndex: "name", key: "name" },
+    { title: "持股", dataIndex: "shares", key: "shares", align: "right" as const },
+    {
+      title: "均价",
+      dataIndex: "avg_cost",
+      key: "avg_cost",
+      align: "right" as const,
+      render: (v: number) => v.toFixed(2),
+    },
+    {
+      title: "现价",
+      dataIndex: "current_price",
+      key: "current_price",
+      align: "right" as const,
+      render: (v: number) => v.toFixed(2),
+    },
+    {
+      title: "市值",
+      dataIndex: "market_value",
+      key: "market_value",
+      align: "right" as const,
+      render: (v: number) => formatMoney(v),
+    },
+    {
+      title: "盈亏",
+      dataIndex: "profit_pct",
+      key: "profit_pct",
+      align: "right" as const,
+      render: (v: number) => (
+        <Text style={{ color: v >= 0 ? "#cf1322" : "#3f8600" }} strong>
+          {fmtPct(v)}
+        </Text>
+      ),
+    },
+    {
+      title: "当日",
+      dataIndex: "today_profit_pct",
+      key: "today_profit_pct",
+      align: "right" as const,
+      render: (v: number) => (
+        <Text style={{ color: v >= 0 ? "#cf1322" : "#3f8600" }} strong>
+          {fmtPct(v)}
+        </Text>
+      ),
+    },
+    {
+      title: "计划",
+      key: "plans",
+      render: (_: unknown, record: Position) => {
+        const plans = plansByCode[record.code];
+        if (plans?.length) {
+          return (
+            <Space size={4} wrap>
+              {plans.map((pl) => {
+                const isTakeProfit = pl.direction === "sell" && pl.status === "take_profit";
+                const isStopLoss = pl.direction === "sell" && pl.status === "stop_loss";
+                let color: string | undefined;
+                let icon: string;
+                if (isTakeProfit) { color = "red"; icon = "🔴"; }
+                else if (isStopLoss) { color = "green"; icon = "🟢"; }
+                else { color = "blue"; icon = "🔵"; }
+                return (
+                  <Tag key={pl.id} color={color}>
+                    {icon} {pl.target_price.toFixed(2)}
+                  </Tag>
+                );
+              })}
+            </Space>
+          );
+        }
         return (
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white">
-                📋 待买入计划 ({pendingBuys.length})
-              </h3>
-              <span className="text-xs text-gray-500">
-                预计需 {formatMoney(totalNeeded)}（可用 {formatMoney(summary.cash_balance)}）
-              </span>
-            </div>
-            <div className="divide-y divide-gray-100 dark:divide-gray-700">
+          <Button
+            size="small"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              setPlanModalCode(record.code);
+              setPlanDirection("buy");
+              setPlanTargetPrice("");
+              setPlanReason("");
+              setPlanModalOpen(true);
+            }}
+          >
+            添加计划
+          </Button>
+        );
+      },
+    },
+  ];
+
+  // Order table columns
+  const orderColumns = [
+    {
+      title: "时间",
+      dataIndex: "created_at",
+      key: "created_at",
+      render: (v: string) => new Date(v).toLocaleString("zh-CN"),
+    },
+    {
+      title: "方向",
+      dataIndex: "direction",
+      key: "direction",
+      render: (d: string) => (
+        <Text style={{ color: d === "buy" ? "#cf1322" : "#3f8600" }} strong>
+          {d === "buy" ? "买入" : "卖出"}
+        </Text>
+      ),
+    },
+    {
+      title: "代码",
+      dataIndex: "code",
+      key: "code",
+      render: (code: string) => <Text code>{code}</Text>,
+    },
+    { title: "名称", dataIndex: "name", key: "name" },
+    {
+      title: "价格",
+      dataIndex: "price",
+      key: "price",
+      align: "right" as const,
+      render: (v: number) => v.toFixed(2),
+    },
+    { title: "数量", dataIndex: "quantity", key: "quantity", align: "right" as const },
+    {
+      title: "金额",
+      dataIndex: "amount",
+      key: "amount",
+      align: "right" as const,
+      render: (v: number) => formatMoney(v),
+    },
+    {
+      title: "类型",
+      dataIndex: "order_type",
+      key: "order_type",
+      render: (t: string) => (
+        <Tag>{t === "manual" ? "手动" : t === "signal" ? "信号" : t}</Tag>
+      ),
+    },
+    {
+      title: "备注",
+      dataIndex: "note",
+      key: "note",
+      render: (n: string | null) => n || "-",
+    },
+  ];
+
+  return (
+    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <Space>
+            <Button
+              icon={<ArrowLeftOutlined />}
+              onClick={() => navigate("/paper")}
+              type="text"
+            />
+            <Title level={3} style={{ margin: 0 }}>{summary.name}</Title>
+          </Space>
+          <Space>
+            <Button
+              icon={<CameraOutlined />}
+              onClick={() => snapshotMut.mutate()}
+              loading={snapshotMut.isPending}
+            >
+              {snapshotMut.isPending ? "更新中..." : "更新快照"}
+            </Button>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setShowTrade(true)}
+            >
+              手动交易
+            </Button>
+          </Space>
+        </div>
+
+        {/* Summary Cards */}
+        <Row gutter={[16, 16]}>
+          <Col xs={12} md={6}>
+            <Card size="small">
+              <Statistic title="总资产" value={formatMoney(totalValue)} />
+            </Card>
+          </Col>
+          <Col xs={12} md={6}>
+            <Card size="small">
+              <Statistic title="可用现金" value={formatMoney(summary.cash_balance)} />
+            </Card>
+          </Col>
+          <Col xs={12} md={6}>
+            <Card size="small">
+              <Statistic title="持仓市值" value={formatMoney(summary.total_market_value)} />
+            </Card>
+          </Col>
+          <Col xs={12} md={6}>
+            <Card size="small">
+              <Statistic
+                title="总收益率"
+                value={fmtPct(summary.total_profit_pct)}
+                valueStyle={{
+                  color: summary.total_profit_pct >= 0 ? "#cf1322" : "#3f8600",
+                }}
+              />
+            </Card>
+          </Col>
+        </Row>
+
+        {/* Secondary Stats */}
+        <Row gutter={[16, 16]}>
+          <Col xs={12} md={6}>
+            <Card size="small">
+              <Text type="secondary">初始资金</Text>
+              <br />
+              <Text strong>{formatMoney(summary.initial_capital)}</Text>
+            </Card>
+          </Col>
+          <Col xs={12} md={6}>
+            <Card size="small">
+              <Text type="secondary">最大回撤</Text>
+              <br />
+              <Text strong>{fmtPct(summary.max_drawdown)}</Text>
+            </Card>
+          </Col>
+          <Col xs={12} md={6}>
+            <Card size="small">
+              <Text type="secondary">胜率</Text>
+              <br />
+              <Text strong>{fmtPct(summary.win_rate)}</Text>
+            </Card>
+          </Col>
+          <Col xs={12} md={6}>
+            <Card size="small">
+              <div>
+                <Text type="secondary">
+                  快照间隔{" "}
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<EditOutlined />}
+                    onClick={() => {
+                      setNewInterval(summary.snapshot_interval);
+                      intervalForm.setFieldsValue({ interval: summary.snapshot_interval });
+                      setEditingInterval(true);
+                    }}
+                  >
+                    编辑
+                  </Button>
+                </Text>
+              </div>
+              <Text strong>{summary.snapshot_interval} 分钟</Text>
+            </Card>
+          </Col>
+        </Row>
+
+        {/* Pending Buy Plans */}
+        {(() => {
+          const pendingBuys = plansData?.filter(p => p.direction === 'buy' && p.status === 'pending') || [];
+          if (pendingBuys.length === 0) return null;
+          const totalNeeded = pendingBuys.reduce((s, p) => s + (p.target_price * (p.quantity || 100)), 0);
+          return (
+            <Card
+              title={`📋 待买入计划 (${pendingBuys.length})`}
+              extra={
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  预计需 {formatMoney(totalNeeded)}（可用 {formatMoney(summary.cash_balance)}）
+                </Text>
+              }
+            >
               {pendingBuys.map((p) => (
-                <div key={p.id} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-750">
-                  <div className="flex items-center gap-4 min-w-0">
-                    <Link to={`/stock/${p.code}`} className="font-mono text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline shrink-0">
-                      {p.code}
+                <div
+                  key={p.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "12px 0",
+                    borderBottom: "1px solid #f0f0f0",
+                  }}
+                >
+                  <Space size={16}>
+                    <Link to={`/stock/${p.code}`}>
+                      <Text code strong>{p.code}</Text>
                     </Link>
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-gray-900 dark:text-white truncate">{p.name || p.code}</div>
-                      <div className="text-xs text-gray-500">
-                        目标 <span className="font-semibold text-red-600">¥{p.target_price.toFixed(2)}</span>
+                    <div>
+                      <Text strong>{p.name || p.code}</Text>
+                      <br />
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        目标 <Text type="danger" strong>¥{p.target_price.toFixed(2)}</Text>
                         {p.quantity ? ` · ${p.quantity}股 · 共${formatMoney(p.target_price * p.quantity)}` : ''}
+                      </Text>
+                      {p.reason && (
+                        <div>
+                          <Text type="secondary" style={{ fontSize: 12 }}>{p.reason}</Text>
+                        </div>
+                      )}
+                      <div>
+                        <Text type="secondary" style={{ fontSize: 11 }}>{p.created_at}</Text>
                       </div>
-                      {p.reason && <div className="text-xs text-gray-400 mt-0.5 truncate max-w-[200px]">{p.reason}</div>}
-                      <div className="text-[10px] text-gray-400 mt-0.5">{p.created_at}</div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">待买入</span>
-                    <button
+                  </Space>
+                  <Space>
+                    <Tag color="blue">待买入</Tag>
+                    <Button
+                      size="small"
+                      danger
+                      icon={<CloseCircleOutlined />}
                       onClick={() => cancelPlanMut.mutate(p.id)}
-                      disabled={cancelPlanMut.isPending}
-                      className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-500 hover:text-red-500 rounded hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
-                      title="取消计划"
-                    >
-                      取消
-                    </button>
-                  </div>
+                      loading={cancelPlanMut.isPending}
+                    />
+                  </Space>
                 </div>
               ))}
-            </div>
-          </div>
-        );
-      })()}
+            </Card>
+          );
+        })()}
 
-      {/* Edit Interval Modal */}
-      {editingInterval && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setEditingInterval(false)}>
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">设置快照间隔</h3>
-            <input
-              type="number"
-              value={newInterval}
-              onChange={e => setNewInterval(Number(e.target.value))}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-            />
-            <p className="text-xs text-gray-500 mt-1">建议值: 15-240分钟，0=不自动快照</p>
-            <div className="flex justify-end gap-3 mt-4">
-              <button onClick={() => setEditingInterval(false)} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">取消</button>
-              <button onClick={() => intervalMut.mutate(newInterval)} disabled={intervalMut.isPending} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">保存</button>
-            </div>
-          </div>
-        </div>
-      )}
+        {/* Edit Interval Modal */}
+        <Modal
+          title="设置快照间隔"
+          open={editingInterval}
+          onCancel={() => setEditingInterval(false)}
+          onOk={() => intervalForm.submit()}
+          confirmLoading={intervalMut.isPending}
+          okText="保存"
+          cancelText="取消"
+        >
+          <Form
+            form={intervalForm}
+            layout="vertical"
+            onFinish={(values) => intervalMut.mutate(values.interval)}
+          >
+            <Form.Item
+              name="interval"
+              label="快照间隔（分钟）"
+              rules={[{ required: true, message: "请输入快照间隔" }]}
+            >
+              <InputNumber style={{ width: "100%" }} min={0} max={1440} />
+            </Form.Item>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              建议值: 15-240分钟，0=不自动快照
+            </Text>
+          </Form>
+        </Modal>
 
-      {/* Equity Curve */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-        <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-3">📈 收益曲线</h3>
-        {curveData?.curve?.length ? (
-          <div ref={chartRef} className="w-full" />
-        ) : (
-          <div className="text-center py-8 text-gray-400">
-            <p>暂无快照数据</p>
-            <p className="text-sm mt-1">点击「更新快照」开始记录收益曲线</p>
-          </div>
-        )}
-      </div>
-
-      {/* Positions Table */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-          <h3 className="text-base font-semibold text-gray-900 dark:text-white">
-            📦 持仓 ({positions?.length || 0})
-          </h3>
-        </div>
-        {posLoading ? (
-          <div className="text-center py-8 text-gray-400">加载中...</div>
-        ) : !positions?.length ? (
-          <div className="text-center py-8 text-gray-400">暂无持仓，点击「手动交易」开始模拟交易</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400">
-                <tr>
-                  <th className="text-left px-4 py-2">代码</th>
-                  <th className="text-left px-4 py-2">名称</th>
-                  <th className="text-right px-4 py-2">持股</th>
-                  <th className="text-right px-4 py-2">均价</th>
-                  <th className="text-right px-4 py-2">现价</th>
-                  <th className="text-right px-4 py-2">市值</th>
-                  <th className="text-right px-4 py-2">盈亏</th>
-                  <th className="text-right px-4 py-2">当日</th>
-                  <th className="text-left px-4 py-2">计划</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                {positions.map((p) => (
-                  <tr key={p.id} className="hover:bg-gray-50 dark:hover:bg-gray-750">
-                    <td className="px-4 py-3 font-mono text-gray-900 dark:text-white">
-                      {p.code}
-                      {p.etf_replaced && <span className="ml-1 text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 rounded px-1">ETF</span>}
-                    </td>
-                    <td className="px-4 py-3 text-gray-700 dark:text-gray-300">{p.name}</td>
-                    <td className="px-4 py-3 text-right text-gray-900 dark:text-white">{p.shares}</td>
-                    <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-300">{p.avg_cost.toFixed(2)}</td>
-                    <td className="px-4 py-3 text-right text-gray-900 dark:text-white">{p.current_price.toFixed(2)}</td>
-                    <td className="px-4 py-3 text-right text-gray-900 dark:text-white font-medium">{formatMoney(p.market_value)}</td>
-                    <td className={`px-4 py-3 text-right font-medium ${p.profit_pct >= 0 ? "text-red-500" : "text-green-500"}`}>
-                      {fmtPct(p.profit_pct)}
-                    </td>
-                    <td className={`px-4 py-3 text-right font-medium ${p.today_profit_pct >= 0 ? "text-red-500" : "text-green-500"}`}>
-                      {fmtPct(p.today_profit_pct)}
-                    </td>
-                    <td className="px-4 py-3">
-                      {plansByCode[p.code]?.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {plansByCode[p.code].map((pl) => {
-                            const isBuy = pl.direction === "buy";
-                            const isTakeProfit = pl.direction === "sell" && pl.status === "take_profit";
-                            const isStopLoss = pl.direction === "sell" && pl.status === "stop_loss";
-                            let badgeClass = "bg-blue-100 dark:bg-blue-900/30 text-blue-600";
-                            let icon = "🔵";
-                            if (isTakeProfit) { badgeClass = "bg-red-100 dark:bg-red-900/30 text-red-600"; icon = "🔴"; }
-                            if (isStopLoss) { badgeClass = "bg-green-100 dark:bg-green-900/30 text-green-600"; icon = "🟢"; }
-                            return (
-                              <span key={pl.id} className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${badgeClass}`}>
-                                <span>{icon}</span>
-                                <span>{pl.target_price.toFixed(2)}</span>
-                              </span>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setPlanModalCode(p.code);
-                            setPlanDirection("buy");
-                            setPlanTargetPrice("");
-                            setPlanReason("");
-                            setPlanModalOpen(true);
-                          }}
-                          className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
-                        >
-                          + 添加计划
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Orders Table */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-gray-900 dark:text-white">
-            📝 交易记录 ({ordersData?.total || 0})
-          </h3>
-          {ordersData && (
-            <div className="flex gap-2 text-sm">
-              <button disabled={ordersPage <= 1} onClick={() => setOrdersPage(p => Math.max(1, p - 1))} className="px-2 py-1 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 disabled:opacity-30">&lt;</button>
-              <span className="text-gray-500">{ordersPage}/{Math.max(1, Math.ceil((ordersData.total || 0) / 20))}</span>
-              <button disabled={ordersPage >= Math.ceil((ordersData.total || 0) / 20)} onClick={() => setOrdersPage(p => p + 1)} className="px-2 py-1 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 disabled:opacity-30">&gt;</button>
+        {/* Equity Curve */}
+        <Card title="📈 收益曲线">
+          {curveData?.curve?.length ? (
+            <div ref={chartRef} style={{ width: "100%" }} />
+          ) : (
+            <div style={{ textAlign: "center", padding: "32px 0" }}>
+              <Text type="secondary">暂无快照数据</Text>
+              <br />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                点击「更新快照」开始记录收益曲线
+              </Text>
             </div>
           )}
-        </div>
-        {!ordersData?.orders?.length ? (
-          <div className="text-center py-8 text-gray-400">暂无交易记录</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400">
-                <tr>
-                  <th className="text-left px-4 py-2">时间</th>
-                  <th className="text-left px-4 py-2">方向</th>
-                  <th className="text-left px-4 py-2">代码</th>
-                  <th className="text-left px-4 py-2">名称</th>
-                  <th className="text-right px-4 py-2">价格</th>
-                  <th className="text-right px-4 py-2">数量</th>
-                  <th className="text-right px-4 py-2">金额</th>
-                  <th className="text-left px-4 py-2">类型</th>
-                  <th className="text-left px-4 py-2">备注</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                {ordersData.orders.map((o: Order) => (
-                  <tr key={o.id} className="hover:bg-gray-50 dark:hover:bg-gray-750">
-                    <td className="px-4 py-2 text-gray-500 text-xs">{new Date(o.created_at).toLocaleString("zh-CN")}</td>
-                    <td className={`px-4 py-2 font-medium ${o.direction === "buy" ? "text-red-500" : "text-green-500"}`}>
-                      {o.direction === "buy" ? "买入" : "卖出"}
-                    </td>
-                    <td className="px-4 py-2 font-mono text-gray-900 dark:text-white">{o.code}</td>
-                    <td className="px-4 py-2 text-gray-700 dark:text-gray-300">{o.name}</td>
-                    <td className="px-4 py-2 text-right text-gray-900 dark:text-white">{o.price.toFixed(2)}</td>
-                    <td className="px-4 py-2 text-right text-gray-900 dark:text-white">{o.quantity}</td>
-                    <td className="px-4 py-2 text-right text-gray-900 dark:text-white">{formatMoney(o.amount)}</td>
-                    <td className="px-4 py-2">
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
-                        {o.order_type === "manual" ? "手动" : o.order_type === "signal" ? "信号" : o.order_type}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2 text-gray-500 text-xs max-w-[100px] truncate">{o.note || "-"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        </Card>
+
+        {/* Positions Table */}
+        <Card
+          title={`📦 持仓 (${positions?.length || 0})`}
+        >
+          <Table
+            dataSource={positions || []}
+            columns={positionColumns}
+            rowKey="id"
+            loading={posLoading}
+            pagination={false}
+            size="small"
+            locale={{ emptyText: "暂无持仓，点击「手动交易」开始模拟交易" }}
+          />
+        </Card>
+
+        {/* Orders Table */}
+        <Card
+          title={`📝 交易记录 (${ordersData?.total || 0})`}
+          extra={
+            ordersData && (
+              <Pagination
+                current={ordersPage}
+                total={ordersData.total || 0}
+                pageSize={20}
+                onChange={(page) => setOrdersPage(page)}
+                size="small"
+                showSizeChanger={false}
+              />
+            )
+          }
+        >
+          <Table
+            dataSource={ordersData?.orders || []}
+            columns={orderColumns}
+            rowKey="id"
+            pagination={false}
+            size="small"
+            locale={{ emptyText: "暂无交易记录" }}
+          />
+        </Card>
+
+        {showTrade && (
+          <TradeModal
+            accountId={accountId}
+            onClose={() => setShowTrade(false)}
+            onSuccess={() => {
+              queryClient.invalidateQueries({ queryKey: ["paper-positions", accountId] });
+              queryClient.invalidateQueries({ queryKey: ["paper-orders", accountId] });
+              queryClient.invalidateQueries({ queryKey: ["paper-summary", accountId] });
+              queryClient.invalidateQueries({ queryKey: ["paper-curve", accountId] });
+            }}
+          />
         )}
-      </div>
 
-      {showTrade && (
-        <TradeModal
-          accountId={accountId}
-          onClose={() => setShowTrade(false)}
-          onSuccess={() => {
-            queryClient.invalidateQueries({ queryKey: ["paper-positions", accountId] });
-            queryClient.invalidateQueries({ queryKey: ["paper-orders", accountId] });
-            queryClient.invalidateQueries({ queryKey: ["paper-summary", accountId] });
-            queryClient.invalidateQueries({ queryKey: ["paper-curve", accountId] });
-          }}
-        />
-      )}
-
-      {/* Add Plan Modal */}
-      {planModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setPlanModalOpen(false)}>
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-sm mx-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">
-              添加买卖计划 - {planModalCode}
-            </h3>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">方向</label>
-                <select
-                  value={planDirection}
-                  onChange={e => setPlanDirection(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                >
-                  <option value="buy">买入</option>
-                  <option value="sell">卖出</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">目标价格</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={planTargetPrice}
-                  onChange={e => setPlanTargetPrice(e.target.value)}
-                  placeholder="0.00"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">备注</label>
-                <input
-                  type="text"
-                  value={planReason}
-                  onChange={e => setPlanReason(e.target.value)}
-                  placeholder="计划理由（可选）"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                />
-              </div>
-              <div className="flex justify-end gap-3 pt-2">
-                <button onClick={() => setPlanModalOpen(false)} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
-                  取消
-                </button>
-                <button
-                  onClick={() => {
-                    if (!planTargetPrice) return;
-                    createPlanMut.mutate({
-                      code: planModalCode,
-                      direction: planDirection,
-                      target_price: parseFloat(planTargetPrice),
-                      reason: planReason,
-                    });
-                  }}
-                  disabled={createPlanMut.isPending || !planTargetPrice}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {createPlanMut.isPending ? "提交中..." : "确认添加"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+        {/* Add Plan Modal */}
+        <Modal
+          title={`添加买卖计划 - ${planModalCode}`}
+          open={planModalOpen}
+          onCancel={() => setPlanModalOpen(false)}
+          onOk={() => planForm.submit()}
+          confirmLoading={createPlanMut.isPending}
+          okText="确认添加"
+          cancelText="取消"
+        >
+          <Form
+            form={planForm}
+            layout="vertical"
+            onFinish={(values) => {
+              createPlanMut.mutate({
+                code: planModalCode,
+                direction: planDirection,
+                target_price: parseFloat(values.target_price),
+                reason: values.reason || "",
+              });
+            }}
+          >
+            <Form.Item label="方向">
+              <Select
+                value={planDirection}
+                onChange={(v) => setPlanDirection(v)}
+                options={DIRECTION_OPTIONS}
+                style={{ width: "100%" }}
+              />
+            </Form.Item>
+            <Form.Item
+              label="目标价格"
+              name="target_price"
+              rules={[{ required: true, message: "请输入目标价格" }]}
+            >
+              <InputNumber style={{ width: "100%" }} min={0} step={0.01} precision={2} />
+            </Form.Item>
+            <Form.Item label="备注" name="reason">
+              <Input placeholder="计划理由（可选）" />
+            </Form.Item>
+          </Form>
+        </Modal>
+      </Space>
   );
 }
