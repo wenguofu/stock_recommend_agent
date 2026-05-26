@@ -5,6 +5,16 @@ import { useWatchlistStore } from '../store/watchlistStore';
 import { useEffect, useState } from 'react';
 import AIAnalyzeButton from '../components/AIAnalyzeButton';
 import { findEtfs } from '../constants/sectorEtfs';
+import IndexCard from '../components/IndexCard';
+import {
+  Row, Col, Card, Segmented, Table, Tag, Descriptions,
+  Progress, Typography, Spin, Space, Button, Empty,
+} from 'antd';
+import {
+  ArrowUpOutlined, ArrowDownOutlined, RiseOutlined, FallOutlined,
+} from '@ant-design/icons';
+
+const { Text } = Typography;
 
 function isTradingTime(): boolean {
   const now = new Date(); const hour = now.getHours(); const minute = now.getMinutes(); const day = now.getDay();
@@ -12,6 +22,11 @@ function isTradingTime(): boolean {
   return (hour === 9 && minute >= 30 || hour > 9 && hour < 11 || hour === 11 && minute <= 30) || (hour >= 13 && hour < 15);
 }
 function getRefetchInterval(): number { return isTradingTime() ? 5000 : 60000; }
+
+const MARKET_SEGMENTED_OPTIONS = [
+  { label: 'A股', value: 'a' },
+  { label: '美股', value: 'us' },
+];
 
 export default function Home() {
   const { items, fetchWatchlist } = useWatchlistStore();
@@ -61,7 +76,7 @@ export default function Home() {
   const { data: outlook, isLoading: outlookLoading } = useQuery({
     queryKey: ['market-outlook'],
     queryFn: () => stockAPI.getMarketOutlook(),
-    refetchInterval: 300000, // 5分钟刷新一次
+    refetchInterval: 300000,
     retry: 3,
   });
 
@@ -70,303 +85,427 @@ export default function Home() {
     return /^[A-Za-z]{1,5}$/.test(item.code);
   });
 
-  // 从辩论报告中提取热点板块
   const hotSectors = sectorPerf.filter((s: any) => s.avg_change > 0).slice(0, 10);
   const top5 = sectorPerf.slice(0, 5);
   const worst3 = sectorPerf.slice(-3).reverse();
 
-  return (
-    <div className="lg:flex lg:gap-3">
-      {/* 左侧悬浮栏 - 操作推荐 & 大盘研判 */}
-      <div className="lg:w-48 xl:w-60 lg:sticky lg:top-4 lg:self-start min-w-0 space-y-3 max-lg:mb-6">
-        {/* 大盘研判 */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-          <div className="flex items-center gap-1.5 mb-3">
-            <span className="text-sm">📊</span>
-            <h2 className="text-xs font-bold text-gray-900 dark:text-white">操作推荐 · 大盘研判</h2>
-          </div>
-          {outlookLoading && !outlook ? (
-            <div className="text-center py-6 text-gray-500"><div className="animate-spin h-5 w-5 border-2 border-blue-600 border-t-transparent rounded-full mx-auto mb-2"></div><span className="text-xs">分析大盘数据中...</span></div>
-          ) : outlook && outlook.success !== false ? (
-            <div className="space-y-3">
-              {/* 判定标签 */}
-              <div className={`text-center py-2 px-3 rounded-lg text-sm font-bold ${
-                outlook.market_status === 'bull' ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800/50' :
-                outlook.market_status === 'bull_neutral' ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800/50' :
-                outlook.market_status === 'neutral' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800/50' :
-                outlook.market_status === 'bear_neutral' ? 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 border border-yellow-200 dark:border-yellow-800/50' :
-                'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800/50'
-              }`}>{outlook.verdict}</div>
+  // Market outlook helpers
+  const statusColorMap: Record<string, string> = {
+    bull: 'red',
+    bull_neutral: 'orange',
+    neutral: 'blue',
+    bear_neutral: 'gold',
+    bear: 'green',
+  };
 
-              {/* 分数条 */}
-              <div>
-                <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+  const outlookScorePercent = outlook ? ((outlook.score + 100) / 2) : 50;
+  const rangePosition = outlook ? ((outlook.cur_price - outlook.low_6m) / (outlook.high_6m - outlook.low_6m) * 100) : 50;
+
+  // Debate table columns
+  const debateColumns = [
+    {
+      title: '名称',
+      dataIndex: 'name',
+      key: 'name',
+      render: (name: string, record: any) => (
+        <Link to={`/ai-debate?code=${record.code}&job_id=${record.job_id}`}>
+          <Text strong>{name}</Text>
+        </Link>
+      ),
+    },
+    {
+      title: '更新时间',
+      dataIndex: 'updated_at',
+      key: 'updated_at',
+      render: (val: string) => <Text type="secondary" style={{ fontSize: 12 }}>{val}</Text>,
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status: string) => {
+        const colorMap: Record<string, string> = {
+          completed: 'green',
+          failed: 'red',
+          canceled: 'default',
+          queued: 'gold',
+          running: 'gold',
+        };
+        const labelMap: Record<string, string> = {
+          completed: '已完成',
+          failed: '失败',
+          canceled: '已终止',
+          queued: '进行中',
+          running: '进行中',
+        };
+        return <Tag color={colorMap[status] || 'default'}>{labelMap[status] || status}</Tag>;
+      },
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      render: (_: any, record: any) => (
+        <Space size="small">
+          <Button
+            size="small"
+            danger
+            onClick={() => handleStopDebate(record.job_id)}
+            disabled={record.status !== 'queued' && record.status !== 'running'}
+          >
+            终止
+          </Button>
+          <Button
+            size="small"
+            type="primary"
+            danger
+            onClick={() => handleDeleteDebate(record.job_id)}
+            disabled={record.status === 'queued' || record.status === 'running'}
+          >
+            删除
+          </Button>
+        </Space>
+      ),
+    },
+  ];
+
+  // Sector table columns
+  const sectorColumns = [
+    {
+      title: '#',
+      dataIndex: 'rank',
+      key: 'rank',
+      width: 40,
+      render: (_: any, __: any, index: number) => (
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          width: 22, height: 22, borderRadius: '50%',
+          background: index < 3 ? '#f5222d' : '#1677ff',
+          color: '#fff', fontSize: 10, fontWeight: 'bold',
+        }}>{index + 1}</span>
+      ),
+    },
+    {
+      title: '板块',
+      dataIndex: 'name',
+      key: 'name',
+      render: (name: string) => <Text strong>{name}</Text>,
+    },
+    {
+      title: '涨跌',
+      dataIndex: 'avg_change',
+      key: 'avg_change',
+      render: (val: number) => (
+        <Text strong style={{ color: val >= 0 ? '#cf1322' : '#3f8600' }}>
+          {val >= 0 ? '+' : ''}{val.toFixed(2)}%
+        </Text>
+      ),
+    },
+    {
+      title: '上涨比例',
+      key: 'ratio',
+      render: (_: any, record: any) => (
+        <Text type="secondary" style={{ fontSize: 11 }}>
+          {record.valid_stocks}/{record.total_stocks}
+        </Text>
+      ),
+    },
+    {
+      title: 'ETF',
+      key: 'etf',
+      render: (_: any, record: any) => {
+        const etfs = findEtfs(record.name);
+        if (!etfs) return null;
+        return (
+          <Link to={`/stock/${etfs[0].code}`}>
+            <Tag color="blue" style={{ fontSize: 10 }}>{etfs[0].name.replace(/ETF$/, '')}</Tag>
+          </Link>
+        );
+      },
+    },
+  ];
+
+  const A_INDICES = [
+    { title: '上证指数', data: shIndex, loading: shLoading, color: '#1677ff' },
+    { title: '深证成指', data: szIndex, loading: szLoading, color: '#722ed1' },
+    { title: '创业板指', data: cybIndex, loading: cybLoading, color: '#eb2f96' },
+  ];
+
+  const US_INDICES = [
+    { title: '道琼斯', data: usDji, loading: usDjiLoading, color: '#1677ff' },
+    { title: '标普500', data: usInx, loading: usInxLoading, color: '#13c2c2' },
+    { title: '纳斯达克', data: usIxic, loading: usIxicLoading, color: '#2f54eb' },
+  ];
+
+  const indices = market === 'a' ? A_INDICES : US_INDICES;
+
+  return (
+    <Row gutter={[16, 16]}>
+      {/* 左侧侧边栏 - 大盘研判 */}
+      <Col xs={24} lg={6}>
+        <Card
+          title={<Space><span>📊</span><span>操作推荐 · 大盘研判</span></Space>}
+          size="small"
+        >
+          {outlookLoading && !outlook ? (
+            <div style={{ textAlign: 'center', padding: '24px 0' }}>
+              <Spin />
+              <div style={{ marginTop: 8, fontSize: 12, color: '#999' }}>分析大盘数据中...</div>
+            </div>
+          ) : outlook && outlook.success !== false ? (
+            <div>
+              {/* 判定标签 */}
+              <div style={{ textAlign: 'center', marginBottom: 12 }}>
+                <Tag color={statusColorMap[outlook.market_status] || 'default'} style={{ fontSize: 14, padding: '4px 12px' }}>
+                  {outlook.verdict}
+                </Tag>
+              </div>
+
+              {/* 分数 */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#999', marginBottom: 4 }}>
                   <span>偏空</span>
-                  <span className="font-bold text-xs">{outlook.score}分</span>
+                  <Text strong style={{ fontSize: 12 }}>{outlook.score}分</Text>
                   <span>偏多</span>
                 </div>
-                <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                  <div className="h-full rounded-full transition-all" style={{
-                    width: `${(outlook.score + 100) / 2}%`,
-                    background: outlook.score >= 0
-                      ? `linear-gradient(90deg, #f59e0b, ${outlook.score > 20 ? '#ef4444' : '#f97316'})`
-                      : `linear-gradient(90deg, ${outlook.score < -20 ? '#22c55e' : '#eab308'}, #f59e0b)`
-                  }}></div>
-                </div>
+                <Progress
+                  percent={outlookScorePercent}
+                  showInfo={false}
+                  strokeColor={
+                    outlook.score >= 0
+                      ? { '0%': '#f59e0b', '100%': outlook.score > 20 ? '#ef4444' : '#f97316' }
+                      : { '0%': outlook.score < -20 ? '#22c55e' : '#eab308', '100%': '#f59e0b' }
+                  }
+                  size="small"
+                />
               </div>
 
-              {/* 关键指标 */}
-              <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                <div className="bg-gray-50 dark:bg-gray-700/50 rounded p-1.5">
-                  <div className="text-gray-500">当前</div>
-                  <div className="font-semibold text-gray-900 dark:text-white">{outlook.cur_price?.toFixed(0)}</div>
-                </div>
-                <div className="bg-gray-50 dark:bg-gray-700/50 rounded p-1.5">
-                  <div className="text-gray-500">MA20</div>
-                  <div className="font-semibold text-gray-900 dark:text-white">{outlook.ma20?.toFixed(0)}</div>
-                </div>
-                <div className="bg-gray-50 dark:bg-gray-700/50 rounded p-1.5">
-                  <div className="text-gray-500">MA60</div>
-                  <div className="font-semibold text-gray-900 dark:text-white">{outlook.ma60?.toFixed(0)}</div>
-                </div>
-                <div className="bg-gray-50 dark:bg-gray-700/50 rounded p-1.5">
-                  <div className="text-gray-500">MA120</div>
-                  <div className="font-semibold text-gray-900 dark:text-white">{outlook.ma120?.toFixed(0)}</div>
-                </div>
-              </div>
+              {/* 关键均线 */}
+              <Descriptions size="small" column={2} style={{ marginBottom: 8 }}>
+                <Descriptions.Item label="当前">{outlook.cur_price?.toFixed(0)}</Descriptions.Item>
+                <Descriptions.Item label="MA20">{outlook.ma20?.toFixed(0)}</Descriptions.Item>
+                <Descriptions.Item label="MA60">{outlook.ma60?.toFixed(0)}</Descriptions.Item>
+                <Descriptions.Item label="MA120">{outlook.ma120?.toFixed(0)}</Descriptions.Item>
+              </Descriptions>
 
               {/* 近6月波动区间 */}
-              <div className="text-[11px]">
-                <div className="flex justify-between text-gray-500 mb-1">
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#999', marginBottom: 4 }}>
                   <span>低 {outlook.low_6m?.toFixed(0)}</span>
                   <span>近6月区间</span>
                   <span>高 {outlook.high_6m?.toFixed(0)}</span>
                 </div>
-                <div className="h-2 bg-gradient-to-r from-green-400 via-yellow-400 to-red-400 rounded-full relative">
-                  <div className="absolute top-0.5 w-0.5 h-1 bg-black dark:bg-white rounded-full transition-all" style={{
-                    left: `${(outlook.cur_price - outlook.low_6m) / (outlook.high_6m - outlook.low_6m) * 100}%`
-                  }}></div>
+                <div style={{ height: 6, background: 'linear-gradient(90deg, #22c55e, #facc15, #ef4444)', borderRadius: 3, position: 'relative' }}>
+                  <div style={{
+                    position: 'absolute', top: -1, width: 2, height: 8,
+                    background: '#000', borderRadius: 1,
+                    left: `${Math.min(100, Math.max(0, rangePosition))}%`,
+                  }} />
                 </div>
               </div>
 
               {/* 近期涨跌 */}
-              <div className="grid grid-cols-3 gap-1 text-center text-[11px]">
-                <div>
-                  <div className="text-gray-500">近1月</div>
-                  <div className={`font-semibold ${outlook.pct_30d >= 0 ? 'text-red-600' : 'text-green-600'}`}>{outlook.pct_30d >= 0 ? '+' : ''}{outlook.pct_30d}%</div>
-                </div>
-                <div>
-                  <div className="text-gray-500">近2月</div>
-                  <div className={`font-semibold ${outlook.pct_60d >= 0 ? 'text-red-600' : 'text-green-600'}`}>{outlook.pct_60d >= 0 ? '+' : ''}{outlook.pct_60d}%</div>
-                </div>
-                <div>
-                  <div className="text-gray-500">近6月</div>
-                  <div className={`font-semibold ${outlook.pct_120d >= 0 ? 'text-red-600' : 'text-green-600'}`}>{outlook.pct_120d >= 0 ? '+' : ''}{outlook.pct_120d}%</div>
-                </div>
-              </div>
+              <Descriptions size="small" column={3} style={{ marginBottom: 8 }}>
+                <Descriptions.Item label="近1月">
+                  <Text style={{ color: outlook.pct_30d >= 0 ? '#cf1322' : '#3f8600', fontSize: 11 }}>
+                    {outlook.pct_30d >= 0 ? '+' : ''}{outlook.pct_30d}%
+                  </Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="近2月">
+                  <Text style={{ color: outlook.pct_60d >= 0 ? '#cf1322' : '#3f8600', fontSize: 11 }}>
+                    {outlook.pct_60d >= 0 ? '+' : ''}{outlook.pct_60d}%
+                  </Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="近6月">
+                  <Text style={{ color: outlook.pct_120d >= 0 ? '#cf1322' : '#3f8600', fontSize: 11 }}>
+                    {outlook.pct_120d >= 0 ? '+' : ''}{outlook.pct_120d}%
+                  </Text>
+                </Descriptions.Item>
+              </Descriptions>
 
               {/* 操作建议 */}
-              <div className="bg-blue-50 dark:bg-blue-900/10 rounded-lg p-3 border border-blue-100 dark:border-blue-800/30">
-                <h3 className="text-[11px] font-bold text-gray-900 dark:text-white mb-1">📋 操作建议</h3>
-                <p className="text-[11px] text-gray-700 dark:text-gray-300 leading-relaxed">{outlook.suggest}</p>
-              </div>
+              <Card size="small" style={{ marginBottom: 8, background: '#e6f4ff', border: '1px solid #91caff' }}>
+                <Text strong style={{ fontSize: 11 }}>📋 操作建议</Text>
+                <div style={{ fontSize: 11, color: '#595959', marginTop: 4 }}>{outlook.suggest}</div>
+              </Card>
 
               {/* 未来1月展望 */}
-              <div className="bg-purple-50 dark:bg-purple-900/10 rounded-lg p-3 border border-purple-100 dark:border-purple-800/30">
-                <h3 className="text-[11px] font-bold text-gray-900 dark:text-white mb-1">🔮 未来1月展望</h3>
-                <p className="text-[11px] text-gray-700 dark:text-gray-300 leading-relaxed">{outlook.outlook}</p>
-              </div>
+              <Card size="small" style={{ marginBottom: 8, background: '#f9f0ff', border: '1px solid #d3adf7' }}>
+                <Text strong style={{ fontSize: 11 }}>🔮 未来1月展望</Text>
+                <div style={{ fontSize: 11, color: '#595959', marginTop: 4 }}>{outlook.outlook}</div>
+              </Card>
 
-              {/* 核心逻辑 */}
-              <details className="text-[11px]">
-                <summary className="text-gray-500 cursor-pointer hover:text-gray-700 dark:hover:text-gray-300">评分依据 ({outlook.reasons?.length || 0}条)</summary>
-                <ul className="mt-1.5 space-y-1 pl-2">
+              {/* 评分依据 */}
+              <details style={{ fontSize: 11 }}>
+                <summary style={{ color: '#999', cursor: 'pointer' }}>
+                  评分依据 ({outlook.reasons?.length || 0}条)
+                </summary>
+                <ul style={{ marginTop: 4, paddingLeft: 16 }}>
                   {outlook.reasons?.map((r: string, i: number) => (
-                    <li key={i} className="text-gray-600 dark:text-gray-400 leading-relaxed">· {r}</li>
+                    <li key={i} style={{ color: '#666', lineHeight: 1.6 }}>{r}</li>
                   ))}
                 </ul>
               </details>
             </div>
           ) : (
-            <div className="text-center py-6 text-gray-500 text-xs">数据获取失败</div>
+            <div style={{ textAlign: 'center', padding: '24px 0', color: '#999', fontSize: 12 }}>
+              数据获取失败
+            </div>
           )}
-        </div>
-      </div>
+        </Card>
+      </Col>
 
       {/* 主内容区 */}
-      <div className="flex-1 min-w-0 space-y-6">
-        {/* 市场切换Tab */}
-        <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1 w-fit shadow">
-          <button onClick={() => setMarket('a')} className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${market === 'a' ? 'bg-white dark:bg-gray-700 text-red-600 dark:text-red-400 shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>🇨🇳 A股</button>
-          <button onClick={() => setMarket('us')} className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${market === 'us' ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'}`}>🇺🇸 美股</button>
-        </div>
+      <Col xs={24} lg={12}>
+        {/* 市场切换 */}
+        <Segmented
+          options={MARKET_SEGMENTED_OPTIONS}
+          value={market}
+          onChange={(val) => setMarket(val as 'a' | 'us')}
+          style={{ marginBottom: 16 }}
+        />
 
         {/* 三大指数 */}
-        {market === 'a' ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <IndexCard title="上证指数" data={shIndex} isLoading={shLoading} gradientFrom="from-blue-600" gradientTo="to-blue-800" />
-            <IndexCard title="深证成指" data={szIndex} isLoading={szLoading} gradientFrom="from-indigo-600" gradientTo="to-indigo-800" />
-            <IndexCard title="创业板指" data={cybIndex} isLoading={cybLoading} gradientFrom="from-purple-600" gradientTo="to-purple-800" />
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <IndexCard title="道琼斯" data={usDji} isLoading={usDjiLoading} gradientFrom="from-blue-700" gradientTo="to-blue-900" />
-            <IndexCard title="标普500" data={usInx} isLoading={usInxLoading} gradientFrom="from-sky-600" gradientTo="to-sky-800" />
-            <IndexCard title="纳斯达克" data={usIxic} isLoading={usIxicLoading} gradientFrom="from-cyan-600" gradientTo="to-cyan-800" />
-          </div>
-        )}
+        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+          {indices.map((idx) => (
+            <Col xs={24} md={8} key={idx.title}>
+              <IndexCard
+                title={idx.title}
+                data={idx.data}
+                isLoading={idx.loading}
+                color={idx.color}
+              />
+            </Col>
+          ))}
+        </Row>
 
         {/* 自选股 */}
-        <div>
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-              {market === 'a' ? 'A股自选' : '美股自选'}
-              <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">({filteredItems.length}只)</span>
-            </h2>
-            <Link to="/watchlist" className="text-blue-600 hover:text-blue-800 dark:text-blue-400">管理自选</Link>
-          </div>
+        <Card
+          title={<Space>{market === 'a' ? 'A股自选' : '美股自选'}<Tag>{filteredItems.length}只</Tag></Space>}
+          extra={<Link to="/watchlist">管理自选</Link>}
+          style={{ marginBottom: 16 }}
+        >
           {filteredItems.length === 0 ? (
-            <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-lg shadow">
-              <p className="text-gray-500 dark:text-gray-400">{market === 'a' ? '暂无A股自选' : '暂无美股自选'}</p>
-              <Link to="/watchlist" className="mt-4 inline-block text-blue-600 hover:text-blue-800 dark:text-blue-400">添加自选股</Link>
-            </div>
+            <Empty description={market === 'a' ? '暂无A股自选' : '暂无美股自选'}>
+              <Link to="/watchlist">添加自选股</Link>
+            </Empty>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredItems.map((item) => (<StockCard key={item.code} code={item.code} name={item.name} />))}
-            </div>
+            <Row gutter={[16, 16]}>
+              {filteredItems.map((item) => (
+                <Col xs={24} md={12} lg={8} key={item.code}>
+                  <StockCard code={item.code} name={item.name} />
+                </Col>
+              ))}
+            </Row>
           )}
-        </div>
+        </Card>
 
         {/* 辩论记录 */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-2xl font-bold text-gray-900 dark:text-white">辩论记录</h2>
-            <div className="flex gap-2">
-              <button onClick={() => setDebateFilter('active')} className={`px-3 py-1 rounded ${debateFilter === 'active' ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}>进行中</button>
-              <button onClick={() => setDebateFilter('completed')} className={`px-3 py-1 rounded ${debateFilter === 'completed' ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}>已完成</button>
+        <Card
+          title="辩论记录"
+          extra={
+            <Segmented
+              options={[
+                { label: '进行中', value: 'active' },
+                { label: '已完成', value: 'completed' },
+              ]}
+              value={debateFilter}
+              onChange={(val) => setDebateFilter(val as 'active' | 'completed')}
+            />
+          }
+        >
+          {debateLoading ? (
+            <div style={{ textAlign: 'center', padding: '24px 0' }}>
+              <Spin />
             </div>
-          </div>
-          {debateLoading ? (<div className="text-gray-500">加载中...</div>
-          ) : debateJobs.length === 0 ? (<div className="text-gray-500">暂无任务</div>
+          ) : debateJobs.length === 0 ? (
+            <Empty description="暂无任务" />
           ) : (
-            <div className="space-y-2">
-              {debateJobs.map((job) => (
-                <Link key={job.job_id} to={`/ai-debate?code=${job.code}&job_id=${job.job_id}`} className="flex items-center justify-between p-3 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700">
-                  <div>
-                    <div className="font-semibold text-gray-900 dark:text-white">{job.name}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">{job.updated_at}</div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`text-xs px-2 py-1 rounded ${job.status === 'completed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : job.status === 'failed' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' : job.status === 'canceled' ? 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300' : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'}`}>
-                      {job.status === 'completed' ? '已完成' : job.status === 'failed' ? '失败' : job.status === 'canceled' ? '已终止' : '进行中'}
-                    </span>
-                    <button onClick={(e) => { e.preventDefault(); handleStopDebate(job.job_id); }} disabled={job.status !== 'queued' && job.status !== 'running'} className="text-xs px-2 py-1 bg-yellow-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed">终止</button>
-                    <button onClick={(e) => { e.preventDefault(); handleDeleteDebate(job.job_id); }} disabled={job.status === 'queued' || job.status === 'running'} className="text-xs px-2 py-1 bg-red-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed">删除</button>
-                  </div>
-                </Link>
-              ))}
-            </div>
+            <Table
+              dataSource={debateJobs}
+              columns={debateColumns}
+              rowKey="job_id"
+              size="small"
+              pagination={false}
+            />
           )}
-        </div>
-      </div>
+        </Card>
+      </Col>
 
-      {/* 右侧悬浮栏 - 板块市场预览（仅A股模式） */}
+      {/* 右侧侧边栏 - 板块市场预览（仅A股） */}
       {market === 'a' && (
-        <div className="lg:w-48 xl:w-60 lg:sticky lg:top-4 lg:self-start min-w-0 space-y-3 max-lg:mt-6">
-          {/* 今日热点板块 TOP 8 */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
-            <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-              <div className="flex items-center gap-2">
-                <span className="text-base">🔥</span>
-                <h2 className="text-sm font-bold text-gray-900 dark:text-white">今日热点板块</h2>
-                {sectorLoading && <div className="animate-spin h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full"></div>}
-              </div>
-              <p className="text-[11px] text-gray-500 mt-0.5">基于成分股实时涨跌幅平均</p>
-            </div>
+        <Col xs={24} lg={6}>
+          {/* 今日热点板块 */}
+          <Card
+            title={
+              <Space>
+                <span>🔥</span>
+                <span>今日热点板块</span>
+                {sectorLoading && <Spin size="small" />}
+              </Space>
+            }
+            size="small"
+            style={{ marginBottom: 16 }}
+          >
             {sectorLoading && hotSectors.length === 0 ? (
-              <div className="text-center py-6 text-gray-500 text-xs">计算板块表现中...</div>
-            ) : (
-              <div className="divide-y divide-gray-100 dark:divide-gray-700">
-                {hotSectors.slice(0, 8).map((s: any, i: number) => {
-                  const etfs = findEtfs(s.name);
-                  return (
-                    <div key={s.name} className="flex items-center justify-between px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-700/30">
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 ${i < 3 ? 'bg-red-500' : 'bg-blue-500'}`}>{i + 1}</span>
-                        <div className="min-w-0">
-                          <div className="text-xs font-semibold text-gray-900 dark:text-white truncate">{s.name}</div>
-                          <div className="text-[10px] text-gray-500">{s.valid_stocks}/{s.total_stocks}只涨</div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {etfs && (
-                          <Link to={`/stock/${etfs[0].code}`} className="text-[10px] px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded border border-blue-200 dark:border-blue-800 hover:bg-blue-100 leading-none">
-                            {etfs[0].name.replace(/ETF$/, '')}
-                          </Link>
-                        )}
-                        <div className={`text-right font-bold text-xs min-w-[56px] ${s.avg_change >= 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
-                          {s.avg_change >= 0 ? '+' : ''}{s.avg_change.toFixed(2)}%
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div style={{ textAlign: 'center', padding: '24px 0', color: '#999', fontSize: 12 }}>
+                计算板块表现中...
               </div>
+            ) : (
+              <Table
+                dataSource={hotSectors.slice(0, 8).map((s: any, i: number) => ({ ...s, key: s.name, rank: i + 1 }))}
+                columns={sectorColumns.filter(c => c.key !== 'rank')}
+                size="small"
+                pagination={false}
+                showHeader={false}
+                rowKey="name"
+              />
             )}
-            <div className="px-4 py-2 border-t border-gray-100 dark:border-gray-700 text-[10px] text-gray-400 text-center">
+            <div style={{ textAlign: 'center', fontSize: 10, color: '#bbb', marginTop: 8 }}>
               {sectorPerf.reduce((a: number, s: any) => a + s.valid_stocks, 0)} 只成分股
             </div>
-          </div>
+          </Card>
 
-          {/* TOP 5 + 偏弱 并排 */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-3">
-              <div className="flex items-center gap-1.5 mb-2">
-                <span className="text-sm">📈</span>
-                <h3 className="text-xs font-bold text-gray-900 dark:text-white">最强 TOP 5</h3>
-              </div>
-              <div className="space-y-2">
+          {/* TOP 5 + 偏弱 */}
+          <Row gutter={12} style={{ marginBottom: 16 }}>
+            <Col span={12}>
+              <Card title={<Space><RiseOutlined /><span>最强 TOP 5</span></Space>} size="small">
                 {top5.map((s: any, i: number) => (
-                  <div key={s.name} className="flex items-center justify-between">
-                    <span className="text-[11px] text-gray-700 dark:text-gray-300 truncate flex-1">{i + 1}. {s.name}</span>
-                    <span className="text-[11px] font-bold text-red-600 dark:text-red-400 shrink-0 ml-1">+{s.avg_change.toFixed(1)}%</span>
+                  <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={{ fontSize: 11 }} ellipsis>{i + 1}. {s.name}</Text>
+                    <Text strong style={{ color: '#cf1322', fontSize: 11 }}>+{s.avg_change.toFixed(1)}%</Text>
                   </div>
                 ))}
-              </div>
-            </div>
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-3">
-              <div className="flex items-center gap-1.5 mb-2">
-                <span className="text-sm">📉</span>
-                <h3 className="text-xs font-bold text-gray-900 dark:text-white">偏弱 TOP 3</h3>
-              </div>
-              <div className="space-y-2">
+              </Card>
+            </Col>
+            <Col span={12}>
+              <Card title={<Space><FallOutlined /><span>偏弱 TOP 3</span></Space>} size="small">
                 {worst3.map((s: any, i: number) => (
-                  <div key={s.name} className="flex items-center justify-between">
-                    <span className="text-[11px] text-gray-700 dark:text-gray-300 truncate flex-1">{i + 1}. {s.name}</span>
-                    <span className="text-[11px] font-bold text-green-600 dark:text-green-400 shrink-0 ml-1">{s.avg_change.toFixed(1)}%</span>
+                  <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={{ fontSize: 11 }} ellipsis>{i + 1}. {s.name}</Text>
+                    <Text strong style={{ color: '#3f8600', fontSize: 11 }}>{s.avg_change.toFixed(1)}%</Text>
                   </div>
                 ))}
-              </div>
-            </div>
-          </div>
+              </Card>
+            </Col>
+          </Row>
 
           {/* 下一个主线预测 */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border-l-4 border-purple-500">
-            <div className="flex items-center gap-1.5 mb-2">
-              <span className="text-sm">🔮</span>
-              <h2 className="text-xs font-bold text-gray-900 dark:text-white">下一个主线预测</h2>
-            </div>
+          <Card
+            title={<Space><span>🔮</span><span>下一个主线预测</span></Space>}
+            size="small"
+            style={{ borderLeft: '4px solid #722ed1' }}
+          >
             {hotSectors.length > 0 ? (
-              <div className="space-y-2">
-                <p className="text-xs text-gray-600 dark:text-gray-400">
-                  当前：<span className="font-bold text-red-600 dark:text-red-400">{hotSectors[0]?.name}</span>
+              <div>
+                <Text style={{ fontSize: 12 }}>
+                  当前：<Text strong style={{ color: '#cf1322' }}>{hotSectors[0]?.name}</Text>
                   {findEtfs(hotSectors[0]?.name) && (
-                    <Link to={`/stock/${findEtfs(hotSectors[0]?.name)![0].code}`} className="ml-1.5 text-[10px] text-blue-500 hover:underline">
+                    <Link to={`/stock/${findEtfs(hotSectors[0]?.name)![0].code}`} style={{ marginLeft: 6, fontSize: 10 }}>
                       → {findEtfs(hotSectors[0]?.name)![0].name}
                     </Link>
                   )}
-                </p>
-                <p className="text-[11px] text-gray-500 leading-relaxed">
+                </Text>
+                <div style={{ fontSize: 11, color: '#999', marginTop: 8 }}>
                   {(() => {
                     if (hotSectors.length < 2) return '数据不足，难以预测';
                     const top = hotSectors[0];
@@ -375,72 +514,72 @@ export default function Home() {
                     if (parseFloat(gap) > 2) return `💡 ${top.name} 领先优势明显（+${gap}%），预计仍为主线。关注低位补涨。`;
                     return `📊 ${top.name} 与 ${second.name} 差距仅 ${gap}%，若 ${second.name} 放量有望轮动为新主线。`;
                   })()}
-                </p>
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {hotSectors.slice(0, 5).map((s: any) => (
-                    <Link key={s.name} to={`/stock/${findEtfs(s.name)?.[0]?.code || ''}`}
-                      className={`px-2 py-0.5 text-[10px] rounded-full border leading-normal ${
-                        s.avg_change > 0 ? 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300' : 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800 text-green-700 dark:text-green-300'
-                      } ${!findEtfs(s.name) ? 'opacity-60 pointer-events-none' : 'hover:bg-opacity-80'}`}
-                    >
-                      {s.name} {s.avg_change >= 0 ? '+' : ''}{s.avg_change.toFixed(1)}%
-                    </Link>
-                  ))}
+                </div>
+                <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {hotSectors.slice(0, 5).map((s: any) => {
+                    const etfs = findEtfs(s.name);
+                    return (
+                      <Tag
+                        key={s.name}
+                        color={s.avg_change > 0 ? 'red' : 'green'}
+                        style={{ fontSize: 10, opacity: !etfs ? 0.6 : 1, cursor: etfs ? 'pointer' : 'not-allowed' }}
+                      >
+                        {etfs ? (
+                          <Link to={`/stock/${etfs[0].code}`} style={{ color: 'inherit' }}>
+                            {s.name} {s.avg_change >= 0 ? '+' : ''}{s.avg_change.toFixed(1)}%
+                          </Link>
+                        ) : (
+                          <span>{s.name} {s.avg_change >= 0 ? '+' : ''}{s.avg_change.toFixed(1)}%</span>
+                        )}
+                      </Tag>
+                    );
+                  })}
                 </div>
               </div>
             ) : (
-              <p className="text-xs text-gray-500">计算板块表现中...</p>
+              <Text type="secondary" style={{ fontSize: 12 }}>计算板块表现中...</Text>
             )}
-          </div>
-        </div>
+          </Card>
+        </Col>
       )}
-    </div>
-  );
-}
-
-function IndexCard({ title, data, isLoading, gradientFrom, gradientTo }: { title: string; data: any; isLoading: boolean; gradientFrom: string; gradientTo: string }) {
-  const changePercent = data?.change_percent ?? 0;
-  const changeValue = data?.current_price && data?.yesterday_close ? data.current_price - data.yesterday_close : 0;
-  const isUp = changePercent >= 0;
-  return (
-    <div className={`bg-gradient-to-r ${gradientFrom} ${gradientTo} rounded-xl shadow-lg p-6 text-white transition-transform hover:scale-105`}>
-      <h3 className="text-lg font-semibold mb-4 opacity-90">{title}</h3>
-      {isLoading ? (<div className="flex items-center justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div></div>
-      ) : data && data.current_price != null ? (
-        <div>
-          <div className={`text-3xl font-bold mb-2 ${isUp ? 'text-red-300' : 'text-green-300'}`}>{Number(data.current_price).toFixed(2)}</div>
-          <div className="flex items-baseline gap-3 mb-3">
-            <div className={`text-2xl font-bold ${isUp ? 'text-red-200' : 'text-green-200'}`}>{isUp ? '+' : ''}{changePercent.toFixed(2)}%</div>
-            <div className={`text-lg font-semibold ${isUp ? 'text-red-200' : 'text-green-200'}`}>{isUp ? '+' : ''}{changeValue.toFixed(2)}</div>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-xs opacity-80 mt-4 pt-4 border-t border-white/20">
-            <div><div className="opacity-70">最高</div><div className="font-semibold">{data.high?.toFixed(2) || '--'}</div></div>
-            <div><div className="opacity-70">最低</div><div className="font-semibold">{data.low?.toFixed(2) || '--'}</div></div>
-            <div className="col-span-2"><div className="opacity-70">成交量</div><div className="font-semibold">{data.volume ? (data.volume / 10000).toFixed(0) + '万手' : '--'}</div></div>
-          </div>
-        </div>
-      ) : (<div className="text-red-200 text-sm">数据加载失败</div>)}
-    </div>
+    </Row>
   );
 }
 
 function StockCard({ code, name }: { code: string; name?: string }) {
-  const { data, isLoading } = useQuery({queryKey: ['realtime', code], queryFn: () => stockAPI.getRealtime(code), refetchInterval: getRefetchInterval()});
+  const { data, isLoading } = useQuery({
+    queryKey: ['realtime', code],
+    queryFn: () => stockAPI.getRealtime(code),
+    refetchInterval: getRefetchInterval(),
+  });
+
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 hover:shadow-lg transition-shadow">
-      <div className="flex justify-between items-start mb-2">
-        <Link to={`/stock/${code}`} className="flex-1">
-          <div><h3 className="font-bold text-lg text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400">{name || code}</h3><p className="text-sm text-gray-500 dark:text-gray-400">{code}</p></div>
+    <Card size="small" hoverable>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+        <Link to={`/stock/${code}`}>
+          <Text strong style={{ fontSize: 16 }}>{name || code}</Text>
+          <br />
+          <Text type="secondary" style={{ fontSize: 12 }}>{code}</Text>
         </Link>
       </div>
-      {isLoading ? (<div className="text-gray-400">加载中...</div>
+      {isLoading ? (
+        <Spin size="small" />
       ) : data ? (
         <div>
-          <div className="text-2xl font-bold text-gray-900 dark:text-white mb-1">{/^\d{6}$/.test(code) ? '¥' : '$'}{data.current_price?.toFixed(2)}</div>
-          <div className={`text-lg font-semibold mb-3 ${data.change_percent >= 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>{data.change_percent >= 0 ? '+' : ''}{data.change_percent?.toFixed(2)}%</div>
-          <AIAnalyzeButton code={code} className="w-full text-sm" />
+          <Text strong style={{ fontSize: 20 }}>
+            {/^\d{6}$/.test(code) ? '¥' : '$'}{data.current_price?.toFixed(2)}
+          </Text>
+          <br />
+          <Text strong style={{ fontSize: 16, color: data.change_percent >= 0 ? '#cf1322' : '#3f8600' }}>
+            {data.change_percent >= 0 ? '+' : ''}{data.change_percent?.toFixed(2)}%
+          </Text>
+          <div style={{ marginTop: 8 }}>
+            <AIAnalyzeButton code={code} className="" />
+          </div>
         </div>
-      ) : (<div className="text-gray-400">数据获取失败</div>)}
-    </div>
+      ) : (
+        <Text type="secondary">数据获取失败</Text>
+      )}
+    </Card>
   );
 }
