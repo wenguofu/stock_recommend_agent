@@ -169,6 +169,20 @@ def task_sector_analysis():
     except Exception as e:
         return f"❌ 板块交叉分析失败: {e}"
 
+def task_sector_hotspot():
+    """板块热点挖掘 - 每30分钟"""
+    if not is_trading_hours():
+        return None
+    sys.path.insert(0, PROJECT_ROOT)
+    from scripts.sector_hotspot import main as scan_main
+    import io
+    from contextlib import redirect_stdout
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        scan_main()
+    output = buf.getvalue().strip()
+    return output if output else None
+
 def task_auto_trade():
     """自动跟踪交易执行 - 9:00/11:00/13:00/15:00"""
     if not is_trading_hours():
@@ -276,6 +290,16 @@ TASKS = [
         'func': task_market_monitor,
         'type': 'interval',
         'interval': 300,
+        'last_run': 0,
+        'run_count': 0,
+        'last_output': '',
+        'last_error': '',
+    },
+    {
+        'name': '板块热点挖掘',
+        'func': task_sector_hotspot,
+        'type': 'interval',
+        'interval': 1800,  # 30分钟
         'last_run': 0,
         'run_count': 0,
         'last_output': '',
