@@ -535,51 +535,6 @@ export default function StockDetail() {
         </Card>
       )}
 
-      {comprehensiveLoading && realtimeLoading ? (
-        <Card>
-          <Spin tip="加载实时行情..." />
-        </Card>
-      ) : displayData ? (
-        <Card title="实时行情">
-          <Spin spinning={comprehensiveLoading && realtimeLoading}>
-            <Descriptions column={{ xs: 2, sm: 3, md: 4 }} bordered size="small">
-              <Descriptions.Item label="当前价">
-                <Statistic
-                  value={displayData.current_price ?? 0}
-                  precision={2}
-                  prefix="¥"
-                  valueStyle={{ color: isUp ? upColor : downColor, fontWeight: 700 }}
-                />
-              </Descriptions.Item>
-              <Descriptions.Item label="涨跌幅">
-                <Tag color={isUp ? 'red' : 'green'} style={{ fontSize: 16, padding: '2px 8px' }}>
-                  {isUp ? '+' : ''}{displayData.change_percent?.toFixed(2)}%
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="最高">
-                {displayData.high?.toFixed(2)}
-              </Descriptions.Item>
-              <Descriptions.Item label="最低">
-                {displayData.low?.toFixed(2)}
-              </Descriptions.Item>
-              <Descriptions.Item label="成交量">
-                {displayData.volume ? (displayData.volume / 10000).toFixed(0) + '万手' : '--'}
-              </Descriptions.Item>
-              <Descriptions.Item label="成交额">
-                {displayData.amount
-                  ? (displayData.amount / 100000000).toFixed(2) + '亿'
-                  : '--'}
-              </Descriptions.Item>
-              <Descriptions.Item label="换手率">
-                {displayData.turnover_rate != null
-                  ? displayData.turnover_rate.toFixed(2) + '%'
-                  : '--'}
-              </Descriptions.Item>
-            </Descriptions>
-          </Spin>
-        </Card>
-      ) : null}
-
       <Card>
         <Tabs items={tabItems} />
       </Card>

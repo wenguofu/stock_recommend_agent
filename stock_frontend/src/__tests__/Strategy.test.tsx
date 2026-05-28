@@ -30,11 +30,6 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
-// Mock LoadingSpinner
-vi.mock('../components/LoadingSpinner', () => ({
-  default: () => <div data-testid="loading-spinner">LoadingSpinner</div>,
-}));
-
 import Strategy from '../pages/Strategy';
 
 function renderWithProviders(ui: React.ReactElement) {

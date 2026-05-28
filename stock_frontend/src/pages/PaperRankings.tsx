@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { Card, Table, Button, Tag, Space, Typography, Spin, Segmented } from "antd";
+import { ArrowLeftOutlined } from "@ant-design/icons";
+import type { ColumnsType } from "antd/es/table";
 
+const { Title, Text } = Typography;
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:35000";
 
 interface RankingItem {
@@ -57,144 +61,125 @@ export default function PaperRankings() {
       })
     : [];
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+  const rankEmoji = (idx: number) => {
+    if (idx === 0) return "🥇";
+    if (idx === 1) return "🥈";
+    if (idx === 2) return "🥉";
+    return idx + 1;
+  };
+
+  const rankColors = ["#faad14", "#8c8c8c", "#d48806"];
+
+  const columns: ColumnsType<RankingItem> = [
+    {
+      title: '#', key: 'rank', align: 'center', width: 52,
+      render: (_: any, __: RankingItem, idx: number) => (
+        <Text strong style={{ fontSize: 18, color: rankColors[idx] || '#8c8c8c' }}>{rankEmoji(idx)}</Text>
+      ),
+    },
+    {
+      title: '账户名称', dataIndex: 'account_name', key: 'account_name',
+      render: (name: string, record: RankingItem) => (
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">📊 收益排名</h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-1">
-            所有模拟盘按收益率倒序排列，评估各策略表现
-          </p>
+          <Text strong>{name}</Text>
+          <div>
+            <Tag color={record.strategy_id ? "blue" : "default"} style={{ fontSize: 11 }}>
+              {record.strategy_id ? "策略盘" : "手动盘"}
+            </Tag>
+          </div>
         </div>
-        <button
-          onClick={() => navigate("/paper")}
-          className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
-        >
+      ),
+    },
+    {
+      title: '收益率', dataIndex: 'total_profit_pct', key: 'profit_pct', align: 'right',
+      render: (v: number) => (
+        <Text strong style={{ fontSize: 16, color: v >= 0 ? '#ff4d4f' : '#52c41a' }}>{fmtPct(v)}</Text>
+      ),
+      sorter: (a, b) => a.total_profit_pct - b.total_profit_pct,
+    },
+    {
+      title: '总盈亏', dataIndex: 'total_pnl', key: 'total_pnl', align: 'right',
+      render: (v: number) => (
+        <Text style={{ color: v >= 0 ? '#ff4d4f' : '#52c41a' }}>{fmtMoney(v)}</Text>
+      ),
+    },
+    {
+      title: '总资产', dataIndex: 'total_value', key: 'total_value', align: 'right',
+      render: (v: number) => <Text strong>{fmtMoney(v)}</Text>,
+    },
+    { title: '起始资金', dataIndex: 'initial_capital', key: 'initial_capital', align: 'right',
+      render: (v: number) => <Text type="secondary">{fmtMoney(v)}</Text>,
+    },
+    { title: '胜率', dataIndex: 'win_rate', key: 'win_rate', align: 'right', render: (v: number | null) => fmtPct(v) },
+    { title: '最大回撤', dataIndex: 'max_drawdown', key: 'max_drawdown', align: 'right', render: (v: number | null) => fmtPct(v) },
+    { title: '持仓', dataIndex: 'stock_count', key: 'stock_count', align: 'center' },
+    { title: '订单', dataIndex: 'order_count', key: 'order_count', align: 'center', render: (v: number) => <Text type="secondary">{v}</Text> },
+    { title: '运行', dataIndex: 'days_running', key: 'days_running', align: 'center',
+      render: (v: number) => <Text type="secondary" style={{ fontSize: 12 }}>{v}天</Text>,
+    },
+  ];
+
+  return (
+    <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <Title level={2}>📊 收益排名</Title>
+          <Text type="secondary">所有模拟盘按收益率倒序排列，评估各策略表现</Text>
+        </div>
+        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/paper")}>
           返回模拟盘
-        </button>
+        </Button>
       </div>
 
       {/* Sort Tabs */}
-      <div className="flex gap-2">
-        {[
-          { key: "profit_pct" as const, label: "收益率" },
-          { key: "total_pnl" as const, label: "总盈亏" },
-          { key: "win_rate" as const, label: "胜率" },
-        ].map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setSortBy(tab.key)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              sortBy === tab.key
-                ? "bg-blue-600 text-white"
-                : "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <Segmented
+        value={sortBy}
+        onChange={(val) => setSortBy(val as "profit_pct" | "total_pnl" | "win_rate")}
+        options={[
+          { label: '收益率', value: 'profit_pct' },
+          { label: '总盈亏', value: 'total_pnl' },
+          { label: '胜率', value: 'win_rate' },
+        ]}
+      />
 
       {/* Loading */}
       {isLoading && (
-        <div className="text-center py-12">
-          <div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full mx-auto"></div>
-        </div>
+        <Card><div style={{ textAlign: 'center', padding: 48 }}><Spin /></div></Card>
       )}
 
       {/* Error */}
       {error && (
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 text-red-600">
-          加载失败: {(error as Error).message}
-        </div>
+        <Card>
+          <Text type="danger">加载失败: {(error as Error).message}</Text>
+        </Card>
       )}
 
       {/* Empty */}
       {!isLoading && sorted.length === 0 && (
-        <div className="text-center py-16 text-gray-400">
-          <p className="text-2xl mb-2">📭</p>
-          <p>暂无模拟盘数据</p>
+        <div style={{ textAlign: 'center', padding: 64 }}>
+          <Text type="secondary" style={{ fontSize: 24, display: 'block', marginBottom: 8 }}>📭</Text>
+          <Text type="secondary">暂无模拟盘数据</Text>
         </div>
       )}
 
       {/* Ranking Table */}
       {sorted.length > 0 && (
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400">
-                <tr>
-                  <th className="text-center px-3 py-3 w-12">#</th>
-                  <th className="text-left px-3 py-3">账户名称</th>
-                  <th className="text-right px-3 py-3">收益率</th>
-                  <th className="text-right px-3 py-3">总盈亏</th>
-                  <th className="text-right px-3 py-3">总资产</th>
-                  <th className="text-right px-3 py-3">起始资金</th>
-                  <th className="text-right px-3 py-3">胜率</th>
-                  <th className="text-right px-3 py-3">最大回撤</th>
-                  <th className="text-center px-3 py-3">持仓</th>
-                  <th className="text-center px-3 py-3">订单</th>
-                  <th className="text-center px-3 py-3">运行</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                {sorted.map((item, idx) => {
-                  const rankColors = ["text-yellow-500", "text-gray-400", "text-amber-600"];
-                  return (
-                    <tr
-                      key={item.account_id}
-                      onClick={() => navigate(`/paper/breakdown/${item.account_id}`)}
-                      className="hover:bg-gray-50 dark:hover:bg-gray-750 cursor-pointer transition-colors"
-                    >
-                      <td className={`text-center px-3 py-3 font-bold text-lg ${rankColors[idx] || "text-gray-500"}`}>
-                        {idx + 1 <= 3 ? ["🥇", "🥈", "🥉"][idx] : idx + 1}
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="font-medium text-gray-900 dark:text-white">{item.account_name}</div>
-                        <div className="text-xs text-gray-400">
-                          {item.strategy_id ? "策略盘" : "手动盘"}
-                        </div>
-                      </td>
-                      <td className={`px-3 py-3 text-right font-bold text-base ${
-                        item.total_profit_pct >= 0 ? "text-red-500" : "text-green-500"
-                      }`}>
-                        {fmtPct(item.total_profit_pct)}
-                      </td>
-                      <td className={`px-3 py-3 text-right font-medium ${
-                        item.total_pnl >= 0 ? "text-red-500" : "text-green-500"
-                      }`}>
-                        {fmtMoney(item.total_pnl)}
-                      </td>
-                      <td className="px-3 py-3 text-right text-gray-900 dark:text-white font-medium">
-                        {fmtMoney(item.total_value)}
-                      </td>
-                      <td className="px-3 py-3 text-right text-gray-500">
-                        {fmtMoney(item.initial_capital)}
-                      </td>
-                      <td className="px-3 py-3 text-right text-gray-700 dark:text-gray-300">
-                        {fmtPct(item.win_rate)}
-                      </td>
-                      <td className="px-3 py-3 text-right text-gray-700 dark:text-gray-300">
-                        {fmtPct(item.max_drawdown)}
-                      </td>
-                      <td className="text-center px-3 py-3 text-gray-900 dark:text-white">
-                        {item.stock_count}
-                      </td>
-                      <td className="text-center px-3 py-3 text-gray-500">
-                        {item.order_count}
-                      </td>
-                      <td className="text-center px-3 py-3 text-gray-500 text-xs">
-                        {item.days_running}天
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <Card styles={{ body: { padding: 0 } }}>
+          <Table<RankingItem>
+            columns={columns}
+            dataSource={sorted}
+            rowKey="account_id"
+            pagination={false}
+            size="middle"
+            scroll={{ x: 1100 }}
+            onRow={(record) => ({
+              onClick: () => navigate(`/paper/breakdown/${record.account_id}`),
+              style: { cursor: 'pointer' },
+            })}
+          />
+        </Card>
       )}
-    </div>
+    </Space>
   );
 }

@@ -1,33 +1,51 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { stockAPI } from '../services/api';
+import { Card, Table, Button, InputNumber, Space, Typography, Spin, Tag, Statistic } from 'antd';
+import { PlusOutlined, DeleteOutlined, CalculatorOutlined } from '@ant-design/icons';
+import type { ColumnsType } from 'antd/es/table';
 
+const { Title, Text } = Typography;
 const API = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:35000';
 
-// ─── 子组件 ──────────────────────────────────
-
-/** 信号灯组件 */
-function SignalLight({ label, status, color }: { label: string; status: string; color: string }) {
-  return (
-    <div className="flex items-center gap-2 text-sm">
-      <span className={`w-3 h-3 rounded-full ${color}`} />
-      <span className="text-gray-500 dark:text-gray-400">{label}:</span>
-      <span className="font-medium text-gray-900 dark:text-white">{status}</span>
-    </div>
-  );
+interface HealthItem {
+  code: string;
+  name: string;
+  score: number;
+  ma_score: number;
+  macd_signal: string;
+  rsi_score: number;
+  trend: string;
+  suggestion: string;
+  shares?: number | null;
+  cost_price?: number | null;
 }
 
-/** 持仓状态标签 */
-function PosBadge({ shares, cost }: { shares?: number | null; cost?: number | null }) {
-  if (!shares || !cost) return null;
-  return (
-    <span className="ml-2 px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300">
-      持仓 {shares}股 @ ¥{cost.toFixed(2)}
-    </span>
-  );
+interface JournalItem {
+  id: number;
+  code: string;
+  name: string;
+  entry_date: string;
+  entry_price: number;
+  shares: number;
+  stop_loss: number;
+  exit_date: string | null;
+  pnl: number | null;
+  pnl_pct: number | null;
+  reason_entry: string;
 }
 
-// ─── 主页面 ──────────────────────────────────
+interface StatsData {
+  total_trades: number;
+  win_rate: number;
+  wins: number;
+  losses: number;
+  total_pnl: number;
+  profit_factor: number;
+  max_win_streak: number;
+  max_loss_streak: number;
+  avg_win: number;
+  avg_loss: number;
+}
 
 export default function Midline() {
   const queryClient = useQueryClient();
@@ -48,8 +66,10 @@ export default function Midline() {
     target_price: 0,
   });
   const [calcResult, setCalcResult] = useState<any>(null);
+  const [calcLoading, setCalcLoading] = useState(false);
 
   const handleCalc = async () => {
+    setCalcLoading(true);
     const res = await fetch(`${API}/api/midline/position-calc`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -57,6 +77,7 @@ export default function Midline() {
     });
     const data = await res.json();
     setCalcResult(data);
+    setCalcLoading(false);
   };
 
   // ═══ 交易日志 ═══
@@ -71,244 +92,266 @@ export default function Midline() {
   });
 
   const handleDelete = async (id: number) => {
-    if (!confirm('删除这笔记录？')) return;
     await fetch(`${API}/api/midline/journal/${id}`, { method: 'DELETE' });
     queryClient.invalidateQueries({ queryKey: ['midline-journal'] });
   };
 
-  const journals = journalData?.data || [];
-  const stats = statsData?.data || {};
+  const handleAddJournal = () => {
+    const code = prompt('股票代码');
+    const name = prompt('股票名称');
+    const entryDate = prompt('入场日期 (YYYY-MM-DD)');
+    const entryPrice = prompt('入场价格');
+    const shares = prompt('股数');
+    const stopLoss = prompt('止损价');
+    const reason = prompt('入场理由');
+    if (!code || !entryPrice) return;
+    fetch(`${API}/api/midline/journal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code, name, entry_date: entryDate,
+        entry_price: parseFloat(entryPrice),
+        shares: parseInt(shares || '100'),
+        stop_loss: parseFloat(stopLoss || '0'),
+        reason_entry: reason,
+      }),
+    }).then(() => queryClient.invalidateQueries({ queryKey: ['midline-journal'] }));
+  };
+
+  const journals: JournalItem[] = journalData?.data || [];
+  const stats: StatsData = statsData?.data || {};
+  const healthItems: HealthItem[] = healthData?.data || [];
+
+  // Health table columns
+  const healthColumns: ColumnsType<HealthItem> = [
+    {
+      title: '代码', dataIndex: 'code', key: 'code',
+      render: (code: string) => (
+        <a href={`/stock/${code}`} style={{ fontFamily: 'monospace', color: '#1677ff' }}>{code}</a>
+      ),
+      width: 100,
+    },
+    {
+      title: '名称', dataIndex: 'name', key: 'name',
+      render: (name: string, record: HealthItem) => (
+        <Space>
+          <Text>{name}</Text>
+          {record.shares && record.cost_price && (
+            <Tag color="blue">持仓 {record.shares}股 @ ¥{record.cost_price.toFixed(2)}</Tag>
+          )}
+        </Space>
+      ),
+    },
+    {
+      title: '评分', dataIndex: 'score', key: 'score', align: 'right',
+      render: (score: number) => (
+        <Text strong style={{
+          fontSize: 18,
+          color: score >= 70 ? '#52c41a' : score >= 40 ? '#faad14' : '#ff4d4f',
+        }}>{score}</Text>
+      ),
+      width: 80,
+    },
+    { title: '均线', dataIndex: 'ma_score', key: 'ma_score', align: 'center', render: (v: number) => `${v}分`, width: 80 },
+    { title: 'MACD', dataIndex: 'macd_signal', key: 'macd_signal', align: 'center', width: 80 },
+    { title: 'RSI', dataIndex: 'rsi_score', key: 'rsi_score', align: 'center', render: (v: number) => `${v}分`, width: 80 },
+    { title: '趋势', dataIndex: 'trend', key: 'trend', width: 80 },
+    { title: '建议', dataIndex: 'suggestion', key: 'suggestion', width: 100 },
+  ];
+
+  // Journal table columns
+  const journalColumns: ColumnsType<JournalItem> = [
+    {
+      title: '代码', dataIndex: 'code', key: 'code',
+      render: (code: string, record: JournalItem) => (
+        <a href={`/stock/${code}`} style={{ fontFamily: 'monospace' }}>{code} {record.name}</a>
+      ),
+      width: 120,
+    },
+    { title: '入场日', dataIndex: 'entry_date', key: 'entry_date', width: 110 },
+    { title: '入场价', dataIndex: 'entry_price', key: 'entry_price', align: 'right', render: (v: number) => `¥${v}`, width: 90 },
+    { title: '股数', dataIndex: 'shares', key: 'shares', align: 'right', width: 70 },
+    { title: '止损', dataIndex: 'stop_loss', key: 'stop_loss', align: 'right', render: (v: number) => <Text style={{ color: '#ff4d4f' }}>¥{v}</Text>, width: 90 },
+    { title: '出场日', dataIndex: 'exit_date', key: 'exit_date', render: (v: string | null) => v || '—', width: 110 },
+    {
+      title: '盈亏', dataIndex: 'pnl', key: 'pnl', align: 'right',
+      render: (pnl: number | null, record: JournalItem) => {
+        if (pnl == null) return <Text>—</Text>;
+        return <Text style={{ color: pnl >= 0 ? '#52c41a' : '#ff4d4f' }}>¥{pnl} ({record.pnl_pct}%)</Text>;
+      },
+      width: 130,
+    },
+    { title: '理由', dataIndex: 'reason_entry', key: 'reason_entry', ellipsis: true, width: 150 },
+    {
+      title: '', key: 'action', width: 50,
+      render: (_: any, record: JournalItem) => (
+        <Button type="link" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)} />
+      ),
+    },
+  ];
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-white">📊 中长线交易看板</h1>
+    <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      <Title level={2}>📊 中长线交易看板</Title>
 
       {/* ═══════════ 自选池健康度 ═══════════ */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">📋 自选池趋势健康度</h2>
-          <p className="text-xs text-gray-500 mt-1">基于均线排列+MACD+RSI 综合评分，满分100</p>
-        </div>
+      <Card
+        title={<Text strong>📋 自选池趋势健康度</Text>}
+        extra={<Text type="secondary" style={{ fontSize: 12 }}>基于均线排列+MACD+RSI 综合评分，满分100</Text>}
+      >
         {healthLoading ? (
-          <div className="p-8 text-center text-gray-500">加载中...</div>
+          <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 dark:bg-gray-700">
-                <tr>
-                  <th className="px-4 py-2 text-left">代码</th>
-                  <th className="px-4 py-2 text-left">名称</th>
-                  <th className="px-4 py-2 text-right">评分</th>
-                  <th className="px-4 py-2 text-center">均线</th>
-                  <th className="px-4 py-2 text-center">MACD</th>
-                  <th className="px-4 py-2 text-center">RSI</th>
-                  <th className="px-4 py-2 text-left">趋势</th>
-                  <th className="px-4 py-2 text-left">建议</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(healthData?.data || []).map((s: any) => (
-                  <tr key={s.code} className="border-t border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750">
-                    <td className="px-4 py-3 font-mono text-blue-600 dark:text-blue-400">
-                      <a href={`/stock/${s.code}`}>{s.code}</a>
-                    </td>
-                    <td className="px-4 py-3 text-gray-900 dark:text-white">
-                      {s.name}
-                      <PosBadge shares={s.shares} cost={s.cost_price} />
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <span className={`font-bold text-lg ${
-                        s.score >= 70 ? 'text-green-500' : s.score >= 40 ? 'text-yellow-500' : 'text-red-500'
-                      }`}>
-                        {s.score}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center text-xs">{s.ma_score}分</td>
-                    <td className="px-4 py-3 text-center text-xs">{s.macd_signal}</td>
-                    <td className="px-4 py-3 text-center text-xs">{s.rsi_score}分</td>
-                    <td className="px-4 py-3 text-xs">{s.trend}</td>
-                    <td className="px-4 py-3 text-xs">{s.suggestion}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Table<HealthItem>
+            columns={healthColumns}
+            dataSource={healthItems}
+            rowKey="code"
+            pagination={false}
+            size="small"
+            scroll={{ x: 800 }}
+          />
         )}
-      </div>
+      </Card>
 
       {/* ═══════════ 仓位计算器 + 统计 ═══════════ */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
         {/* 仓位计算器 */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">🧮 仓位计算器</h2>
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+        <Card title={<Text strong>🧮 仓位计算器</Text>}>
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">总资金</label>
-                <input type="number" className="w-full px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-sm"
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>总资金</Text>
+                <InputNumber
+                  style={{ width: '100%' }}
                   value={calcInput.total_capital}
-                  onChange={e => setCalcInput({...calcInput, total_capital: +e.target.value})} />
+                  onChange={v => setCalcInput({ ...calcInput, total_capital: v || 0 })}
+                />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">每笔风险(%)</label>
-                <input type="number" className="w-full px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-sm"
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>每笔风险(%)</Text>
+                <InputNumber
+                  style={{ width: '100%' }}
                   value={calcInput.risk_pct}
-                  onChange={e => setCalcInput({...calcInput, risk_pct: +e.target.value})} />
+                  onChange={v => setCalcInput({ ...calcInput, risk_pct: v || 0 })}
+                />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">入场价</label>
-                <input type="number" step="0.01" className="w-full px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-sm"
-                  value={calcInput.entry_price || ''}
-                  onChange={e => setCalcInput({...calcInput, entry_price: +e.target.value})} />
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>入场价</Text>
+                <InputNumber
+                  style={{ width: '100%' }}
+                  value={calcInput.entry_price || undefined}
+                  onChange={v => setCalcInput({ ...calcInput, entry_price: v || 0 })}
+                  step={0.01}
+                />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">止损价</label>
-                <input type="number" step="0.01" className="w-full px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-sm"
-                  value={calcInput.stop_loss_price || ''}
-                  onChange={e => setCalcInput({...calcInput, stop_loss_price: +e.target.value})} />
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>止损价</Text>
+                <InputNumber
+                  style={{ width: '100%' }}
+                  value={calcInput.stop_loss_price || undefined}
+                  onChange={v => setCalcInput({ ...calcInput, stop_loss_price: v || 0 })}
+                  step={0.01}
+                />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">目标价(可选)</label>
-                <input type="number" step="0.01" className="w-full px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-sm"
-                  value={calcInput.target_price || ''}
-                  onChange={e => setCalcInput({...calcInput, target_price: +e.target.value})} />
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>目标价(可选)</Text>
+                <InputNumber
+                  style={{ width: '100%' }}
+                  value={calcInput.target_price || undefined}
+                  onChange={v => setCalcInput({ ...calcInput, target_price: v || 0 })}
+                  step={0.01}
+                />
               </div>
             </div>
-            <button onClick={handleCalc}
-              className="w-full py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium">
+            <Button type="primary" block onClick={handleCalc} loading={calcLoading} icon={<CalculatorOutlined />}>
               计算仓位
-            </button>
+            </Button>
             {calcResult && !calcResult.error && (
-              <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/30 rounded space-y-2 text-sm">
-                <div className="flex justify-between"><span className="text-gray-500">建议买入</span>
-                  <span className="font-bold text-lg text-blue-600">{calcResult.suggested_shares} 股</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">占用资金</span>
-                  <span>¥{calcResult.position_value?.toLocaleString()} ({calcResult.position_pct}%)</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">最大亏损</span>
-                  <span className="text-red-500">¥{calcResult.max_loss_amount?.toLocaleString()}</span></div>
-                {calcResult.risk_reward_ratio && (
-                  <div className="flex justify-between"><span className="text-gray-500">盈亏比</span>
-                    <span className={calcResult.risk_reward_ratio >= 2 ? 'text-green-600 font-bold' : 'text-yellow-600'}>
-                      1:{calcResult.risk_reward_ratio}
-                    </span></div>
-                )}
-                <div className="flex justify-between text-xs text-gray-400"><span>每股价差</span>
-                  <span>¥{calcResult.risk_per_share}</span></div>
+              <div style={{
+                background: '#e6f4ff', padding: 16, borderRadius: 8, marginTop: 8,
+              }}>
+                <Space direction="vertical" style={{ width: '100%' }} size="small">
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Text type="secondary">建议买入</Text>
+                    <Text strong style={{ fontSize: 18, color: '#1677ff' }}>{calcResult.suggested_shares} 股</Text>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Text type="secondary">占用资金</Text>
+                    <Text>¥{calcResult.position_value?.toLocaleString()} ({calcResult.position_pct}%)</Text>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Text type="secondary">最大亏损</Text>
+                    <Text style={{ color: '#ff4d4f' }}>¥{calcResult.max_loss_amount?.toLocaleString()}</Text>
+                  </div>
+                  {calcResult.risk_reward_ratio && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <Text type="secondary">盈亏比</Text>
+                      <Text strong style={{ color: calcResult.risk_reward_ratio >= 2 ? '#52c41a' : '#faad14' }}>
+                        1:{calcResult.risk_reward_ratio}
+                      </Text>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>每股价差</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>¥{calcResult.risk_per_share}</Text>
+                  </div>
+                </Space>
               </div>
             )}
-          </div>
-        </div>
+          </Space>
+        </Card>
 
         {/* 交易统计 */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">📈 交易统计</h2>
+        <Card title={<Text strong>📈 交易统计</Text>}>
           {stats.total_trades > 0 ? (
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <Stat label="总交易" value={stats.total_trades} />
-              <Stat label="胜率" value={`${stats.win_rate}%`} color={stats.win_rate >= 50 ? 'text-green-500' : 'text-red-500'} />
-              <Stat label="盈利次数" value={stats.wins} />
-              <Stat label="亏损次数" value={stats.losses} />
-              <Stat label="累计盈亏" value={`¥${(stats.total_pnl || 0).toLocaleString()}`}
-                color={(stats.total_pnl || 0) >= 0 ? 'text-green-500' : 'text-red-500'} />
-              <Stat label="盈亏比" value={`1:${stats.profit_factor}`}
-                color={(stats.profit_factor || 0) >= 1.5 ? 'text-green-500' : 'text-yellow-500'} />
-              <Stat label="最大连胜" value={stats.max_win_streak} />
-              <Stat label="最大连败" value={stats.max_loss_streak} color="text-red-500" />
-              <Stat label="均盈" value={`¥${(stats.avg_win || 0).toLocaleString()}`} color="text-green-500" />
-              <Stat label="均亏" value={`¥${(stats.avg_loss || 0).toLocaleString()}`} color="text-red-500" />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <Statistic title="总交易" value={stats.total_trades} />
+              <Statistic title="胜率" value={stats.win_rate} suffix="%"
+                valueStyle={{ color: stats.win_rate >= 50 ? '#52c41a' : '#ff4d4f' }} />
+              <Statistic title="盈利次数" value={stats.wins} />
+              <Statistic title="亏损次数" value={stats.losses} />
+              <Statistic title="累计盈亏" value={`¥${(stats.total_pnl || 0).toLocaleString()}`}
+                valueStyle={{ color: (stats.total_pnl || 0) >= 0 ? '#52c41a' : '#ff4d4f' }} />
+              <Statistic title="盈亏比" value={`1:${stats.profit_factor}`}
+                valueStyle={{ color: (stats.profit_factor || 0) >= 1.5 ? '#52c41a' : '#faad14' }} />
+              <Statistic title="最大连胜" value={stats.max_win_streak} />
+              <Statistic title="最大连败" value={stats.max_loss_streak}
+                valueStyle={{ color: '#ff4d4f' }} />
+              <Statistic title="均盈" value={`¥${(stats.avg_win || 0).toLocaleString()}`}
+                valueStyle={{ color: '#52c41a' }} />
+              <Statistic title="均亏" value={`¥${(stats.avg_loss || 0).toLocaleString()}`}
+                valueStyle={{ color: '#ff4d4f' }} />
             </div>
           ) : (
-            <div className="text-center py-8 text-gray-400">暂无交易记录，开始记录你的第一笔交易吧</div>
+            <div style={{ textAlign: 'center', padding: 32 }}>
+              <Text type="secondary">暂无交易记录，开始记录你的第一笔交易吧</Text>
+            </div>
           )}
-        </div>
+        </Card>
       </div>
 
       {/* ═══════════ 交易日志 ═══════════ */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">📝 交易日志</h2>
-          <button
-            onClick={() => {
-              const code = prompt('股票代码');
-              const name = prompt('股票名称');
-              const entryDate = prompt('入场日期 (YYYY-MM-DD)');
-              const entryPrice = prompt('入场价格');
-              const shares = prompt('股数');
-              const stopLoss = prompt('止损价');
-              const reason = prompt('入场理由');
-              if (!code || !entryPrice) return;
-              fetch(`${API}/api/midline/journal`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  code, name, entry_date: entryDate,
-                  entry_price: parseFloat(entryPrice),
-                  shares: parseInt(shares || '100'),
-                  stop_loss: parseFloat(stopLoss || '0'),
-                  reason_entry: reason,
-                }),
-              }).then(() => queryClient.invalidateQueries({ queryKey: ['midline-journal'] }));
-            }}
-            className="px-3 py-1.5 bg-green-600 text-white text-sm rounded hover:bg-green-700"
-          >
-            + 记录交易
-          </button>
-        </div>
+      <Card
+        title={<Text strong>📝 交易日志</Text>}
+        extra={<Button type="primary" icon={<PlusOutlined />} onClick={handleAddJournal}>记录交易</Button>}
+      >
         {journalLoading ? (
-          <div className="p-8 text-center text-gray-500">加载中...</div>
+          <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
         ) : journals.length === 0 ? (
-          <div className="p-8 text-center text-gray-400">暂无记录</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 dark:bg-gray-700">
-                <tr>
-                  <th className="px-3 py-2 text-left">代码</th>
-                  <th className="px-3 py-2 text-left">入场日</th>
-                  <th className="px-3 py-2 text-right">入场价</th>
-                  <th className="px-3 py-2 text-right">股数</th>
-                  <th className="px-3 py-2 text-right">止损</th>
-                  <th className="px-3 py-2 text-left">出场日</th>
-                  <th className="px-3 py-2 text-right">盈亏</th>
-                  <th className="px-3 py-2 text-left">理由</th>
-                  <th className="px-3 py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {journals.map((j: any) => (
-                  <tr key={j.id} className="border-t border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750">
-                    <td className="px-3 py-2 font-mono text-blue-600 dark:text-blue-400">{j.code} {j.name}</td>
-                    <td className="px-3 py-2">{j.entry_date}</td>
-                    <td className="px-3 py-2 text-right">¥{j.entry_price}</td>
-                    <td className="px-3 py-2 text-right">{j.shares}</td>
-                    <td className="px-3 py-2 text-right text-red-500">¥{j.stop_loss}</td>
-                    <td className="px-3 py-2">{j.exit_date || '—'}</td>
-                    <td className={`px-3 py-2 text-right font-medium ${
-                      (j.pnl || 0) >= 0 ? 'text-green-500' : 'text-red-500'
-                    }`}>
-                      {j.pnl != null ? `¥${j.pnl} (${j.pnl_pct}%)` : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-xs text-gray-500 max-w-[200px] truncate">{j.reason_entry}</td>
-                    <td className="px-3 py-2">
-                      <button onClick={() => handleDelete(j.id)}
-                        className="text-xs text-red-400 hover:text-red-600">✕</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div style={{ textAlign: 'center', padding: 32 }}>
+            <Text type="secondary">暂无记录</Text>
           </div>
+        ) : (
+          <Table<JournalItem>
+            columns={journalColumns}
+            dataSource={journals}
+            rowKey="id"
+            pagination={false}
+            size="small"
+            scroll={{ x: 1000 }}
+          />
         )}
-      </div>
-    </div>
-  );
-}
-
-function Stat({ label, value, color }: { label: string; value: any; color?: string }) {
-  return (
-    <div className="p-3 bg-gray-50 dark:bg-gray-700 rounded">
-      <div className="text-xs text-gray-500 dark:text-gray-400">{label}</div>
-      <div className={`text-lg font-bold ${color || 'text-gray-900 dark:text-white'}`}>{value}</div>
-    </div>
+      </Card>
+    </Space>
   );
 }

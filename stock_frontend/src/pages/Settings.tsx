@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Card, Form, Input, Select, Button, Typography, Space, Spin, message, Alert, Modal, Tag } from 'antd';
+import { SettingOutlined, ApiOutlined, RobotOutlined, KeyOutlined, PlayCircleOutlined, SaveOutlined, EditOutlined, ReloadOutlined } from '@ant-design/icons';
 import { stockAPI } from '../services/api';
 import type { Agent } from '../services/api';
+
+const { Title, Text } = Typography;
 
 const AI_PROVIDERS = [
   { value: 'openai', label: 'OpenAI' },
@@ -18,7 +22,6 @@ export default function Settings() {
   const [apiKey, setApiKey] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -35,10 +38,8 @@ export default function Settings() {
       const provider = await stockAPI.getConfig('default_ai_provider');
       if (provider) {
         setSelectedProvider(provider);
-        // 加载该provider的API key
         const key = await stockAPI.getConfig(`${provider}_api_key`);
         if (key) setApiKey(key);
-        // 加载该provider的模型
         const model = await stockAPI.getConfig(`${provider}_model`);
         if (model) setSelectedModel(model);
       }
@@ -71,23 +72,17 @@ export default function Settings() {
 
   const handleSave = async () => {
     setSaving(true);
-    setMessage('');
     try {
-      // 保存后端地址
       await stockAPI.setConfig('api_base_url', apiBaseURL);
       stockAPI.setBaseURL(apiBaseURL);
-
-      // 保存AI服务配置
       await stockAPI.setConfig('default_ai_provider', selectedProvider);
       await stockAPI.setConfig(`${selectedProvider}_api_key`, apiKey);
       if (selectedModel) {
         await stockAPI.setConfig(`${selectedProvider}_model`, selectedModel);
       }
-
-      setMessage('配置保存成功！');
-      setTimeout(() => setMessage(''), 3000);
+      message.success('配置保存成功！');
     } catch (error) {
-      setMessage(`保存失败: ${(error as Error).message}`);
+      message.error(`保存失败: ${(error as Error).message}`);
     } finally {
       setSaving(false);
     }
@@ -98,7 +93,6 @@ export default function Settings() {
       setTestResult({ success: false, message: '请先输入API Key' });
       return;
     }
-
     setTesting(true);
     setTestResult(null);
     try {
@@ -108,7 +102,6 @@ export default function Settings() {
         selectedModel || undefined
       );
       setTestResult(result);
-      // 如果测试成功，刷新模型列表
       if (result.success) {
         refetchModels();
       }
@@ -122,163 +115,124 @@ export default function Settings() {
     }
   };
 
+  const providerLabel = AI_PROVIDERS.find(p => p.value === selectedProvider)?.label || selectedProvider;
+
   return (
-    <div className="space-y-6">
-      <h1 className="text-3xl font-bold text-gray-900 dark:text-white">系统配置</h1>
+    <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      <Title level={2}>系统配置</Title>
 
       {/* 后端地址配置 */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">后端地址</h2>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              API基础地址
-            </label>
-            <input
-              type="text"
+      <Card title={<><ApiOutlined /> 后端地址</>}>
+        <Form layout="vertical">
+          <Form.Item label="API基础地址">
+            <Input
               value={apiBaseURL}
               onChange={(e) => setApiBaseURL(e.target.value)}
               placeholder="http://127.0.0.1:35000"
-              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
             />
-          </div>
-        </div>
-      </div>
+          </Form.Item>
+        </Form>
+      </Card>
 
       {/* AI服务配置 */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">AI服务配置</h2>
-        <div className="space-y-4">
-          {/* 服务商选择 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              AI服务商
-            </label>
-            <select
+      <Card title={<><RobotOutlined /> AI服务配置</>}>
+        <Form layout="vertical">
+          <Form.Item label="AI服务商">
+            <Select
               value={selectedProvider}
-              onChange={(e) => {
-                setSelectedProvider(e.target.value);
+              onChange={(value) => {
+                setSelectedProvider(value);
                 setApiKey('');
                 setSelectedModel('');
               }}
-              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-            >
-              {AI_PROVIDERS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </div>
+              options={AI_PROVIDERS}
+            />
+          </Form.Item>
 
-          {/* API Key输入 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              API Key
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="password"
+          <Form.Item label="API Key">
+            <Space.Compact style={{ width: '100%' }}>
+              <Input.Password
                 value={apiKey}
                 onChange={(e) => {
                   setApiKey(e.target.value);
-                  setSelectedModel(''); // 清空模型选择
+                  setSelectedModel('');
                 }}
-                placeholder={`输入${AI_PROVIDERS.find(p => p.value === selectedProvider)?.label}的API Key`}
-                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                placeholder={`输入${providerLabel}的API Key`}
+                style={{ flex: 1 }}
               />
-              <button
+              <Button
+                type="primary"
+                style={{ background: '#52c41a', borderColor: '#52c41a' }}
+                icon={<PlayCircleOutlined />}
                 onClick={handleTest}
-                disabled={testing || !apiKey}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                loading={testing}
+                disabled={!apiKey}
               >
-                {testing ? '测试中...' : '测试连接'}
-              </button>
-              <button
+                测试连接
+              </Button>
+              <Button
+                icon={<SaveOutlined />}
                 onClick={handleSave}
-                disabled={saving || !apiKey}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                loading={saving}
+                disabled={!apiKey}
               >
-                {saving ? '保存中...' : '保存AI配置'}
-              </button>
-            </div>
+                保存AI配置
+              </Button>
+            </Space.Compact>
             {testResult && (
-              <div
-                className={`mt-2 p-3 rounded-lg text-sm ${
-                  testResult.success
-                    ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
-                    : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
-                }`}
-              >
-                {testResult.message}
-              </div>
+              <Alert
+                style={{ marginTop: 8 }}
+                type={testResult.success ? 'success' : 'error'}
+                message={testResult.message}
+                showIcon
+              />
             )}
-          </div>
+          </Form.Item>
 
-          {/* 模型选择 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              模型选择
-            </label>
+          <Form.Item label="模型选择">
             {modelsLoading ? (
-              <div className="text-gray-500 dark:text-gray-400">加载模型中...</div>
+              <Spin tip="加载模型中..." />
             ) : models && models.length > 0 ? (
-              <div className="flex gap-2">
-                <select
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                  className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-                >
-                  <option value="">请选择模型</option>
-                  {models.map((model) => (
-                    <option key={model} value={model}>
-                      {model}
-                    </option>
-                  ))}
-                </select>
-                <button
+              <Space.Compact style={{ width: '100%' }}>
+                <Select
+                  value={selectedModel || undefined}
+                  onChange={(value) => setSelectedModel(value)}
+                  placeholder="请选择模型"
+                  options={models.map((m: string) => ({ value: m, label: m }))}
+                  style={{ flex: 1 }}
+                  allowClear
+                />
+                <Button
+                  icon={<ReloadOutlined />}
                   onClick={() => refetchModels()}
                   disabled={!apiKey}
-                  className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 whitespace-nowrap"
                 >
                   刷新模型
-                </button>
-              </div>
+                </Button>
+              </Space.Compact>
             ) : (
-              <div className="text-gray-500 dark:text-gray-400">
-                请先输入API Key并测试连接以加载模型列表
-              </div>
+              <Text type="secondary">请先输入API Key并测试连接以加载模型列表</Text>
             )}
-          </div>
-        </div>
-      </div>
+          </Form.Item>
+        </Form>
+      </Card>
 
       {/* Agent配置 */}
       <AgentConfigSection />
 
-      {/* 保存按钮 */}
-      <div className="flex justify-end">
-        <button
+      {/* 底部保存按钮 */}
+      <div style={{ textAlign: 'right' }}>
+        <Button
+          type="primary"
+          size="large"
+          icon={<SaveOutlined />}
           onClick={handleSave}
-          disabled={saving}
-          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          loading={saving}
         >
-          {saving ? '保存中...' : '保存配置'}
-        </button>
+          保存配置
+        </Button>
       </div>
-
-      {message && (
-        <div
-          className={`p-4 rounded-lg ${
-            message.includes('成功')
-              ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-              : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-          }`}
-        >
-          {message}
-        </div>
-      )}
-    </div>
+    </Space>
   );
 }
 
@@ -308,86 +262,103 @@ function AgentConfigSection() {
   const handleEdit = (agent: Agent) => {
     setEditingAgent(agent);
     setPrompt(agent.prompt);
-  };  const handleSavePrompt = async () => {
-    if (!editingAgent) return;
+  };
 
+  const handleSavePrompt = async () => {
+    if (!editingAgent) return;
     try {
       await stockAPI.updateAgent(editingAgent.id, { prompt });
       setEditingAgent(null);
       setPrompt('');
       loadAgents();
+      message.success('提示词保存成功');
     } catch (error) {
-      alert(`保存失败: ${(error as Error).message}`);
+      message.error(`保存失败: ${(error as Error).message}`);
     }
   };
 
   if (loading) {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <div className="text-center py-8 text-gray-500">加载中...</div>
-      </div>
+      <Card title="Agent配置">
+        <div style={{ textAlign: 'center', padding: '32px 0' }}>
+          <Spin />
+        </div>
+      </Card>
     );
   }
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-      <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">Agent配置</h2>
-      <div className="space-y-4">
+    <Card title="Agent配置">
+      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         {agents.map((agent) => (
-          <div
+          <Card
             key={agent.id}
-            className="border border-gray-200 dark:border-gray-700 rounded-lg p-4"
-          >
-            <div className="flex items-start justify-between mb-2">
-              <div>
-                <h3 className="font-semibold text-gray-900 dark:text-white">{agent.name}</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  类型: {agent.type} | 状态: {agent.enabled ? '启用' : '禁用'}
-                </p>
-              </div>
-              <button
+            size="small"
+            type="inner"
+            title={
+              <Space>
+                <Text strong>{agent.name}</Text>
+                <Tag>{agent.type}</Tag>
+                {agent.enabled ? <Tag color="green">启用</Tag> : <Tag color="default">禁用</Tag>}
+              </Space>
+            }
+            extra={
+              <Button
+                size="small"
+                type="primary"
+                icon={<EditOutlined />}
                 onClick={() => handleEdit(agent)}
-                className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
               >
                 编辑提示词
-              </button>
-            </div>
+              </Button>
+            }
+          >
             {editingAgent?.id === agent.id ? (
-              <div className="mt-4 space-y-2">
-                <textarea
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <Input.TextArea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   rows={8}
-                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white font-mono text-sm"
                   placeholder="输入Agent提示词..."
+                  style={{ fontFamily: 'monospace' }}
                 />
-                <div className="flex gap-2">
-                  <button
+                <Space>
+                  <Button
+                    type="primary"
+                    style={{ background: '#52c41a', borderColor: '#52c41a' }}
                     onClick={handleSavePrompt}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
                   >
                     保存
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     onClick={() => {
                       setEditingAgent(null);
                       setPrompt('');
                     }}
-                    className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
                   >
                     取消
-                  </button>
-                </div>
-              </div>
+                  </Button>
+                </Space>
+              </Space>
             ) : (
-              <div className="mt-2 text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap font-mono bg-gray-50 dark:bg-gray-900 p-3 rounded">
+              <Text
+                type="secondary"
+                style={{
+                  whiteSpace: 'pre-wrap',
+                  fontFamily: 'monospace',
+                  display: 'block',
+                  background: 'rgba(0,0,0,0.02)',
+                  padding: 12,
+                  borderRadius: 4,
+                }}
+              >
                 {agent.prompt.substring(0, 200)}
                 {agent.prompt.length > 200 && '...'}
-              </div>
+              </Text>
             )}
-          </div>
+          </Card>
         ))}
-      </div>
-    </div>
+      </Space>
+    </Card>
   );
 }

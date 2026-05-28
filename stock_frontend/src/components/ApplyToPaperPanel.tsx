@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Card, Select, Button, Alert, Tag, Space, Typography, Spin } from "antd";
+import { ArrowRightOutlined } from "@ant-design/icons";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:35000";
+
+const { Text, Title } = Typography;
 
 interface ApplyToPaperPanelProps {
   codes: string[];
@@ -86,107 +90,111 @@ export default function ApplyToPaperPanel({ codes, jobName, strategyRunId }: App
     },
   });
 
+  if (isLoading) {
+    return (
+      <Card>
+        <div style={{ textAlign: 'center', padding: 24 }}>
+          <Spin />
+        </div>
+      </Card>
+    );
+  }
+
   if (!accounts?.length) {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">📊 应用到模拟盘</h3>
-        <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">
-          还没有创建模拟盘账户，请先在模拟盘页面创建一个。
-        </p>
-        <a
-          href="/paper"
-          className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-        >
-          前往模拟盘
-        </a>
-      </div>
+      <Card
+        title={<Space><Text strong>📊 应用到模拟盘</Text></Space>}
+        style={{ marginTop: 16 }}
+      >
+        <Text type="secondary">还没有创建模拟盘账户，请先在模拟盘页面创建一个。</Text>
+        <div style={{ marginTop: 16 }}>
+          <Button type="primary" href="/paper">前往模拟盘</Button>
+        </div>
+      </Card>
     );
   }
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
-      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-        📊 应用到模拟盘
-      </h3>
-      <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+    <Card
+      title={<Space><Text strong>📊 应用到模拟盘</Text></Space>}
+      style={{ marginTop: 16 }}
+    >
+      <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
         将策略分析结果中推荐的股票作为买入信号应用到模拟盘账户
-      </p>
+      </Text>
 
       {/* Target Stocks */}
-      <div className="mb-4">
-        <p className="text-xs text-gray-500 mb-1">目标股票 ({codes.length} 只):</p>
-        <div className="flex flex-wrap gap-1">
+      <div style={{ marginBottom: 16 }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>目标股票 ({codes.length} 只):</Text>
+        <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
           {codes.map((code) => (
-            <span
-              key={code}
-              className="text-xs px-2 py-0.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded"
-            >
-              {code}
-            </span>
+            <Tag key={code} color="blue">{code}</Tag>
           ))}
         </div>
       </div>
 
       {/* Account Selector */}
-      <div className="flex items-center gap-3 mb-4">
-        <select
-          value={selectedAccountId ?? ""}
-          onChange={(e) => setSelectedAccountId(Number(e.target.value) || null)}
-          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">-- 选择模拟盘账户 --</option>
-          {accounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name} (初始 {a.initial_capital.toLocaleString()})
-            </option>
-          ))}
-        </select>
-        <button
+      <Space style={{ width: '100%', marginBottom: 16 }}>
+        <Select
+          value={selectedAccountId ?? undefined}
+          onChange={(val) => setSelectedAccountId(val ?? null)}
+          placeholder="-- 选择模拟盘账户 --"
+          style={{ flex: 1, minWidth: 250 }}
+          options={accounts.map((a) => ({
+            label: `${a.name} (初始 ${a.initial_capital.toLocaleString()})`,
+            value: a.id,
+          }))}
+        />
+        <Button
+          type="primary"
           onClick={() => applyMutation.mutate()}
           disabled={!selectedAccountId || applyMutation.isPending}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm whitespace-nowrap"
+          loading={applyMutation.isPending}
         >
           {applyMutation.isPending ? "执行中..." : "应用信号"}
-        </button>
-      </div>
+        </Button>
+      </Space>
 
       {/* Result */}
       {showResult && (
-        <div
-          className={`text-sm p-3 rounded-lg ${
-            showResult.success
-              ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800"
-              : "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800"
-          }`}
-        >
-          {showResult.message}
-          {showResult.success && (
-            <button
-              onClick={() => {
-                window.open(`/paper/${selectedAccountId}`, "_self");
-              }}
-              className="ml-3 underline"
-            >
-              查看账户
-            </button>
-          )}
-          <button onClick={() => setShowResult(null)} className="ml-3 text-xs underline">
-            关闭
-          </button>
-        </div>
+        <Alert
+          type={showResult.success ? "success" : "error"}
+          message={showResult.message}
+          showIcon
+          action={
+            <Space size="small">
+              {showResult.success && (
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={() => window.open(`/paper/${selectedAccountId}`, "_self")}
+                >
+                  查看账户
+                </Button>
+              )}
+              <Button
+                type="link"
+                size="small"
+                onClick={() => setShowResult(null)}
+              >
+                关闭
+              </Button>
+            </Space>
+          }
+        />
       )}
 
       {/* Errors detail */}
       {applyMutation.data?.errors?.length > 0 && (
-        <div className="mt-2 text-xs text-gray-500">
-          <p className="font-medium mb-1">失败详情:</p>
+        <div style={{ marginTop: 8 }}>
+          <Text type="secondary" style={{ fontSize: 12 }} strong>失败详情:</Text>
           {applyMutation.data.errors.map((e: any, i: number) => (
-            <p key={i}>
-              #{e.index} {e.code}: {e.error}
-            </p>
+            <div key={i} style={{ fontSize: 12 }}>
+              <Text type="secondary">#{e.index} {e.code}: {e.error}</Text>
+            </div>
           ))}
         </div>
       )}
-    </div>
+    </Card>
   );
 }

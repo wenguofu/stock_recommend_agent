@@ -5,66 +5,78 @@
 | 项目 | 版本 |
 |------|------|
 | React | 19.2 |
-| Vite | 7.2 |
+| Vite | 7.3 |
 | TypeScript | 5.9 |
-| Tailwind CSS | 3.4 |
+| Ant Design | 5.x |
 | React Router | 7.12 |
 | TanStack Query | 5.90 |
 | lightweight-charts | 4.2 |
 | Zustand | 5.0 |
-| marked + dompurify | Markdown 渲染 |
 
-## 路由与页面
+## 路由与页面 (全 antd 重构)
 
-| 路由 | 组件 | 行数 |
+| 路由 | 组件 | 状态 |
 |------|------|------|
-| `/` | Home.tsx | 432 |
-| `/watchlist` | Watchlist.tsx | — |
-| `/stock/:code` | StockDetail.tsx | 947 |
-| `/paper` | PaperAccounts.tsx | — |
-| `/paper/:id` | PaperDetail.tsx | — |
-| `/backtest` | BacktestPage.tsx | — |
-| `/strategy` | StrategyRecommend.tsx | — |
-| `/strategies` | StrategyLibrary.tsx | — |
-| `/tasks` | Tasks.tsx | — |
-| `/settings` | Settings.tsx | — |
+| `/` | Home.tsx | ✅ antd |
+| `/watchlist` | Watchlist.tsx | ✅ antd |
+| `/stock/:code` | StockDetail.tsx | ✅ antd |
+| `/paper` | PaperAccounts.tsx | ✅ antd |
+| `/paper/:id` | PaperDetail.tsx | ✅ antd |
+| `/paper/rankings` | PaperRankings.tsx | ✅ antd |
+| `/paper/breakdown/:id` | PaperBreakdown.tsx | ✅ antd |
+| `/backtest` | BacktestPage.tsx | ✅ antd |
+| `/strategy` | StrategyRecommend.tsx | ✅ antd |
+| `/strategies` | StrategyLibrary.tsx | ✅ antd |
+| `/strategies/:id/run` | StrategyRun.tsx | ✅ antd |
+| `/tasks` | Tasks.tsx | ✅ antd |
+| `/ai-debate` | AIDebate.tsx | ✅ antd |
+| `/settings` | Settings.tsx | ✅ antd |
+| `/sector-prediction` | SectorPrediction.tsx | ✅ antd |
+| `/recommendations` | Recommendations.tsx | ✅ antd |
+| `/midline` | Midline.tsx | ✅ antd |
+
+## 共享组件
+
+| 组件 | 状态 |
+|------|------|
+| Layout | antd Sider + Menu + Segmented |
+| IndexCard | antd Card + Statistic |
+| ErrorBoundary | antd Result |
+| EmptyState | antd Empty |
+| StockHeader | antd Descriptions + Statistic |
+| StockAnalysis | antd Card + Table |
+| StockDebate | antd Card + Table + Tag |
+| AIAnalyzeButton | antd Button + Modal |
+| TradeModal | antd Modal + Form |
+| ApplyToPaperPanel | antd Modal + Form |
+| CandlestickChart | lightweight-charts (不变) |
+| MLPredictPanel | antd Card + Row/Col |
+| RiskPanel | antd Card + Row/Col |
+| MoneyFlowPanel | antd Card + Row/Col |
 
 ## 状态管理
 
 | Store | 内容 |
 |-------|------|
-| `configStore` (Zustand persist) | API URL, AI keys |
-| `watchlistStore` | 自选股列表 |
-
-## 子组件 (已提取)
-
-| 组件 | 来源 |
-|------|------|
-| `MoneyFlowPanel` | StockDetail 拆分 |
-| `RiskPanel` | StockDetail 拆分 |
-| `MLPredictPanel` | StockDetail 拆分 |
-| `CandlestickChart` | K线 + timeline + 分时 |
-| `AIAnalyzeButton` | 触发辩论按钮 |
-| `TradeModal` | 模拟盘交易弹窗 |
-| `ApplyToPaperPanel` | 策略→模拟盘 |
-| `LoadingSpinner` | 加载动画 |
-
-## 常量
-
-| 文件 | 内容 |
-|------|------|
-| `constants/sectorEtfs.ts` | 板块→ETF 映射 + `findEtfs()` |
+| configStore (Zustand persist) | API URL, AI keys |
+| watchlistStore | 自选股列表 |
 
 ## 配置
 
 | 方式 | 文件 |
 |------|------|
-| Vite 代理 | `vite.config.ts` — `/api` → `localhost:35000` |
-| API 地址 | `.env` — `VITE_API_BASE_URL` |
+| Vite 代理 | vite.config.ts — /api → localhost:35000 |
+| API 地址 | .env — VITE_API_BASE_URL |
+| antd 主题 | App.tsx ConfigProvider |
+| 测试 | Vitest + @testing-library/react + jsdom |
 
-## 已知问题
+## 测试
 
-- [ ] 13 个文件中仍有 `import.meta.env.VITE_API_BASE_URL \|\| 'http://127.0.0.1:35000'` 回退（应统一用 proxy 去掉回退）
-- [ ] `Home.tsx` 中 `fetchIndexData()` 直接 fetch 不用 stockAPI 类
-- [ ] 无错误边界组件 (ErrorBoundary)
-- [ ] 无 loading skeleton，全用 spinner
+- 22 个 test 文件，308 个测试全部通过
+- 框架: Vitest + @testing-library/react + @testing-library/jest-dom
+- 运行: `RTK_DISABLE=1 npx vitest run`
+
+## 构建
+
+- `npm run build` — Vite 生产构建，输出 dist/
+- Bundle: ~1.76MB (gzipped ~540KB)

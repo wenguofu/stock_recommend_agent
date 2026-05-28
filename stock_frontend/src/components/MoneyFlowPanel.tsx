@@ -1,4 +1,7 @@
-import React from 'react';
+import { Card, Typography, Row, Col } from 'antd';
+import { DollarOutlined } from '@ant-design/icons';
+
+const { Text } = Typography;
 
 interface MoneyFlowItem {
   label: string;
@@ -26,15 +29,18 @@ function MoneyFlowRow({ label, value, ratio, unit }: MoneyFlowItem) {
   if (value == null) return null;
   const isPositive = value >= 0;
   return (
-    <div>
-      <div className="text-sm text-gray-500 dark:text-gray-400">{label}</div>
-      <div className={`text-lg font-semibold ${isPositive ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+    <Col span={8}>
+      <Text type="secondary" style={{ fontSize: 13 }}>{label}</Text>
+      <br />
+      <Text strong style={{ fontSize: 18, color: isPositive ? '#cf1322' : '#3f8600' }}>
         {isPositive ? '+' : ''}{value.toFixed(2)}{unit}
-      </div>
+      </Text>
       {ratio != null && (
-        <div className="text-xs text-gray-400 mt-1">占比: {ratio.toFixed(2)}%</div>
+        <div>
+          <Text style={{ fontSize: 11, color: '#888' }}>占比: {ratio.toFixed(2)}%</Text>
+        </div>
       )}
-    </div>
+    </Col>
   );
 }
 
@@ -48,13 +54,12 @@ export default function MoneyFlowPanel({ moneyFlow }: Props) {
   ];
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-      <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">今日资金流向</h2>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+    <Card title={<span><DollarOutlined style={{ marginRight: 8 }} />今日资金流向</span>}>
+      <Row gutter={[16, 16]}>
         {items.map((item, idx) => (
           <MoneyFlowRow key={idx} {...item} />
         ))}
-      </div>
-    </div>
+      </Row>
+    </Card>
   );
 }

@@ -1,7 +1,11 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { Card, Table, Tag, Button, Space, Typography, Spin, Empty, Alert, Segmented } from "antd";
+import { ReloadOutlined, PlusOutlined } from "@ant-design/icons";
+import type { ColumnsType } from "antd/es/table";
 
+const { Title, Text } = Typography;
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:35000";
 
 interface RecItem {
@@ -17,17 +21,26 @@ const STRATEGY_LABELS: Record<string, string> = {
   jichang: "基础工具",
 };
 
-const STRATEGY_COLORS: Record<string, string> = {
-  youzi: "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400",
-  lianghua: "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400",
-  jichang: "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400",
+const STRATEGY_BG_COLORS: Record<string, string> = {
+  youzi: "#fff2f0",
+  lianghua: "#e6f4ff",
+  jichang: "#f6ffed",
+};
+const STRATEGY_BORDER_COLORS: Record<string, string> = {
+  youzi: "#ffccc7",
+  lianghua: "#91caff",
+  jichang: "#b7eb8f",
+};
+const STRATEGY_TEXT_COLORS: Record<string, string> = {
+  youzi: "#cf1322",
+  lianghua: "#0958d9",
+  jichang: "#389e0d",
 };
 
 export default function Recommendations() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<"daily" | "weekly">("daily");
-  const [generating, setGenerating] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["recommendations", activeTab],
@@ -56,7 +69,6 @@ export default function Recommendations() {
 
   const handleAddTracking = async (code: string, name: string) => {
     try {
-      // Get first auto-trade account
       const r = await fetch(`${API_BASE}/api/paper/accounts`);
       const accts = await r.json();
       const autoAcct = accts.accounts?.find((a: any) => a.auto_trade);
@@ -64,7 +76,6 @@ export default function Recommendations() {
         alert("没有自动跟踪账户，请先创建");
         return;
       }
-      // Add auto-trade rule
       const r2 = await fetch(`${API_BASE}/api/paper/accounts/${autoAcct.id}/auto-rules`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -93,7 +104,6 @@ export default function Recommendations() {
     const codes = new Set<string>();
     Object.values(strategies).forEach((items: any) => {
       (items as RecItem[]).forEach((r) => {
-        // 提取纯6位代码
         const c = r.code?.replace(/[^0-9]/g, '').slice(0, 6);
         if (c && c.length === 6) codes.add(c);
       });
@@ -117,176 +127,162 @@ export default function Recommendations() {
       return map;
     },
     enabled: allCodes.length > 0,
-    staleTime: 300000, // 5分钟缓存
+    staleTime: 300000,
   });
 
+  const sectorColorMap: Record<string, { color: string; bg: string }> = {
+    '半导体': { color: '#531dab', bg: '#f9f0ff' },
+    '芯片': { color: '#531dab', bg: '#f9f0ff' },
+    '消费电子': { color: '#0958d9', bg: '#e6f4ff' },
+    '新能源': { color: '#389e0d', bg: '#f6ffed' },
+  };
+
+  const getSectorStyle = (rawCode: string) => {
+    const code = rawCode?.replace(/[^0-9]/g, '').slice(0, 6);
+    const sector = code ? sectorMap[code] : null;
+    if (!sector) return { color: '#8c8c8c', bg: '#f5f5f5' };
+    for (const [k, v] of Object.entries(sectorColorMap)) {
+      if (sector.includes(k)) return v;
+    }
+    return { color: '#595959', bg: '#f5f5f5' };
+  };
+
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return 'red';
+    if (score >= 60) return 'gold';
+    return 'blue';
+  };
+
+  const recColumns: ColumnsType<RecItem> = [
+    {
+      title: '#', dataIndex: 'rank', key: 'rank', align: 'center', width: 48,
+      render: (v: number) => <Text type="secondary" style={{ fontFamily: 'monospace' }}>{v}</Text>,
+    },
+    {
+      title: '代码', dataIndex: 'code', key: 'code', width: 90,
+      render: (code: string) => (
+        <Button type="link" onClick={() => navigate(`/stock/${code}`)} style={{ fontFamily: 'monospace', padding: 0 }}>
+          {code}
+        </Button>
+      ),
+    },
+    { title: '名称', dataIndex: 'name', key: 'name', width: 100, render: (v: string) => <Text strong>{v}</Text> },
+    {
+      title: '所属板块', dataIndex: 'code', key: 'sector', width: 100,
+      render: (code: string) => {
+        const style = getSectorStyle(code);
+        const cleanCode = code?.replace(/[^0-9]/g, '').slice(0, 6);
+        const sector = cleanCode ? sectorMap[cleanCode] : null;
+        return sector ? (
+          <Tag style={{ background: style.bg, color: style.color, border: 'none' }}>{sector}</Tag>
+        ) : <Text type="secondary">--</Text>;
+      },
+    },
+    { title: '价格', dataIndex: 'price', key: 'price', align: 'right', width: 80, render: (v: number) => v?.toFixed(2) },
+    {
+      title: '涨跌幅', dataIndex: 'change_pct', key: 'change_pct', align: 'right', width: 80,
+      render: (v: number) => (
+        <Text style={{ color: (v || 0) >= 0 ? '#ff4d4f' : '#52c41a' }}>
+          {(v || 0) >= 0 ? '+' : ''}{v?.toFixed(1)}%
+        </Text>
+      ),
+    },
+    { title: '换手率', dataIndex: 'turnover', key: 'turnover', align: 'right', width: 80, render: (v: number) => `${v?.toFixed(1)}%` },
+    {
+      title: '评分', dataIndex: 'score', key: 'score', align: 'center', width: 72,
+      render: (v: number) => <Tag color={getScoreColor(v)}>{v}</Tag>,
+    },
+    { title: '推荐理由', dataIndex: 'reason', key: 'reason', ellipsis: true, width: 180,
+      render: (v: string) => <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text>,
+    },
+    {
+      title: '操作', key: 'action', width: 80, align: 'center',
+      render: (_: any, record: RecItem) => (
+        <Button size="small" onClick={() => handleAddTracking(record.code, record.name)}>+跟踪</Button>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
+    <Space direction="vertical" size="large" style={{ width: '100%' }}>
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">📋 股票推荐</h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-1">
-            基于多种策略自动筛选潜力股票
-          </p>
+          <Title level={2}>📋 股票推荐</Title>
+          <Text type="secondary">基于多种策略自动筛选潜力股票</Text>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => generateMutation.mutate()}
-            disabled={generateMutation.isPending}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm"
-          >
-            {generateMutation.isPending ? "生成中..." : "🔄 立即生成"}
-          </button>
-        </div>
+        <Button
+          type="primary"
+          icon={<ReloadOutlined />}
+          onClick={() => generateMutation.mutate()}
+          loading={generateMutation.isPending}
+        >
+          {generateMutation.isPending ? "生成中..." : "立即生成"}
+        </Button>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2">
-        <button
-          onClick={() => setActiveTab("daily")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === "daily"
-              ? "bg-blue-600 text-white"
-              : "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700"
-          }`}
-        >
-          📅 每日推荐
-        </button>
-        <button
-          onClick={() => setActiveTab("weekly")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === "weekly"
-              ? "bg-blue-600 text-white"
-              : "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700"
-          }`}
-        >
-          📆 每周推荐
-        </button>
-      </div>
+      <Segmented
+        value={activeTab}
+        onChange={(val) => setActiveTab(val as "daily" | "weekly")}
+        options={[
+          { label: '📅 每日推荐', value: 'daily' },
+          { label: '📆 每周推荐', value: 'weekly' },
+        ]}
+      />
 
       {/* Loading */}
       {isLoading && (
-        <div className="text-center py-12">
-          <div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full mx-auto"></div>
-        </div>
+        <Card><div style={{ textAlign: 'center', padding: 48 }}><Spin /></div></Card>
       )}
 
       {/* Empty */}
       {!isLoading && Object.keys(strategies).length === 0 && (
-        <div className="text-center py-16 text-gray-400">
-          <p className="text-2xl mb-2">📭</p>
-          <p>暂无推荐数据</p>
-          <p className="text-sm mt-2">点击「立即生成」获取今日推荐</p>
+        <div style={{ textAlign: 'center', padding: 64 }}>
+          <Text type="secondary" style={{ fontSize: 24, display: 'block', marginBottom: 8 }}>📭</Text>
+          <Text type="secondary">暂无推荐数据</Text>
+          <br />
+          <Text type="secondary" style={{ fontSize: 12 }}>点击「立即生成」获取今日推荐</Text>
         </div>
       )}
 
       {/* Strategy Sections */}
       {Object.entries(strategies).map(([sname, items]) => {
         const recs = items as RecItem[];
+        const bgColor = STRATEGY_BG_COLORS[sname] || '#f5f5f5';
+        const borderColor = STRATEGY_BORDER_COLORS[sname] || '#d9d9d9';
+        const textColor = STRATEGY_TEXT_COLORS[sname] || '#595959';
         return (
-          <div key={sname} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-            {/* Strategy Header */}
-            <div className={`px-4 py-3 border-b ${STRATEGY_COLORS[sname] || ""}`}>
-              <h2 className="text-lg font-semibold">
+          <Card
+            key={sname}
+            styles={{ body: { padding: 0 } }}
+            title={
+              <Text strong style={{ color: textColor, fontSize: 16 }}>
                 {STRATEGY_LABELS[sname] || sname}
-              </h2>
-            </div>
-
-            {/* Picks Table */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400">
-                  <tr>
-                    <th className="text-center px-3 py-2 w-10">#</th>
-                    <th className="text-left px-3 py-2">代码</th>
-                    <th className="text-left px-3 py-2">名称</th>
-                    <th className="text-left px-3 py-2">所属板块</th>
-                    <th className="text-right px-3 py-2">价格</th>
-                    <th className="text-right px-3 py-2">涨跌幅</th>
-                    <th className="text-right px-3 py-2">换手率</th>
-                    <th className="text-right px-3 py-2">评分</th>
-                    <th className="text-left px-3 py-2">推荐理由</th>
-                    <th className="text-center px-3 py-2">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                  {recs.map((rec) => (
-                    <tr key={rec.id || rec.code} className="hover:bg-gray-50 dark:hover:bg-gray-750">
-                      <td className="text-center px-3 py-2 text-gray-400 font-mono">{rec.rank}</td>
-                      <td className="px-3 py-2 font-mono text-gray-900 dark:text-white">
-                        <button
-                          onClick={() => navigate(`/stock/${rec.code}`)}
-                          className="hover:text-blue-600"
-                        >
-                          {rec.code}
-                        </button>
-                      </td>
-                      <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">{rec.name}</td>
-                      <td className="px-3 py-2 text-xs">
-                        {(() => {
-                          const code = rec.code?.replace(/[^0-9]/g, '').slice(0, 6);
-                          const sector = code ? sectorMap[code] : null;
-                          if (!sector) return <span className="text-gray-400">--</span>;
-                          const colorMap: Record<string, string> = {
-                            '半导体': 'text-purple-600 bg-purple-50 dark:bg-purple-900/20',
-                            '芯片': 'text-purple-600 bg-purple-50 dark:bg-purple-900/20',
-                            '消费电子': 'text-blue-600 bg-blue-50 dark:bg-blue-900/20',
-                            '新能源': 'text-green-600 bg-green-50 dark:bg-green-900/20',
-                          };
-                          let cls = 'text-gray-600 bg-gray-50 dark:bg-gray-700/50';
-                          for (const [k, v] of Object.entries(colorMap)) {
-                            if (sector.includes(k)) { cls = v; break; }
-                          }
-                          return <span className={`inline-block px-2 py-0.5 rounded-full ${cls}`}>{sector}</span>;
-                        })()}
-                      </td>
-                      <td className="px-3 py-2 text-right text-gray-900 dark:text-white">{rec.price?.toFixed(2)}</td>
-                      <td className={`px-3 py-2 text-right font-medium ${
-                        (rec.change_pct || 0) >= 0 ? "text-red-500" : "text-green-500"
-                      }`}>
-                        {(rec.change_pct || 0) >= 0 ? "+" : ""}{rec.change_pct?.toFixed(1)}%
-                      </td>
-                      <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{rec.turnover?.toFixed(1)}%</td>
-                      <td className="px-3 py-2 text-right">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                          (rec.score || 0) >= 80
-                            ? "bg-red-100 text-red-700"
-                            : (rec.score || 0) >= 60
-                            ? "bg-yellow-100 text-yellow-700"
-                            : "bg-blue-100 text-blue-700"
-                        }`}>
-                          {rec.score}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-gray-600 dark:text-gray-400 text-xs max-w-[200px]">
-                        {rec.reason}
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <button
-                          onClick={() => handleAddTracking(rec.code, rec.name)}
-                          className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
-                          title="加入自动跟踪"
-                        >
-                          +跟踪
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+              </Text>
+            }
+            style={{ borderLeft: `4px solid ${borderColor}` }}
+          >
+            <Table<RecItem>
+              columns={recColumns}
+              dataSource={recs}
+              rowKey={(r) => `${r.id || r.code}`}
+              pagination={false}
+              size="small"
+              scroll={{ x: 1000 }}
+            />
+          </Card>
         );
       })}
 
       {/* Generate result */}
       {generateMutation.data && (
-        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4 text-green-700 dark:text-green-400 text-sm">
-          ✅ 生成完成！共 {generateMutation.data.count} 条推荐，
-          {generateMutation.data.total_unique} 只个股
-        </div>
+        <Alert
+          type="success"
+          showIcon
+          message={`✅ 生成完成！共 ${generateMutation.data.count} 条推荐，${generateMutation.data.total_unique} 只个股`}
+        />
       )}
-    </div>
+    </Space>
   );
 }

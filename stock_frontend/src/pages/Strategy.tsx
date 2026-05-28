@@ -5,7 +5,6 @@ import { useEffect, useState } from 'react';
 import { Button, Card, Table, Tag, Select, Modal, Form, Input, Space, Typography, Spin, Empty, Checkbox, Alert } from 'antd';
 import { ReloadOutlined, WarningOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import LoadingSpinner from '../components/LoadingSpinner';
 
 const { Title, Text } = Typography;
 
@@ -386,7 +385,7 @@ export default function Strategy() {
       {isLoading ? (
         <Card>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 48 }}>
-            <LoadingSpinner size="large" />
+            <Spin size="large" />
             <Text type="secondary" style={{ marginTop: 16 }}>正在加载数据...</Text>
           </div>
         </Card>

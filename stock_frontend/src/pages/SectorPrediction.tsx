@@ -1,13 +1,24 @@
 import { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Card, Table, Button, Tag, Typography, Space, Spin, Row, Col, Empty, Collapse } from "antd";
+import { ReloadOutlined, HistoryOutlined, CalendarOutlined } from "@ant-design/icons";
 import { stockAPI } from "../services/api";
+
+const { Title, Text } = Typography;
 
 // 从 markdown 报告中解析出结构化数据
 interface SectorPredictionItem {
   rank: number;
   name: string;
   total: number;
-  scores: { supply_demand: number; cycle_position: number; tech_breakthrough: number; policy_catalyst: number; capital_flow: number; valuation_elasticity: number };
+  scores: {
+    supply_demand: number;
+    cycle_position: number;
+    tech_breakthrough: number;
+    policy_catalyst: number;
+    capital_flow: number;
+    valuation_elasticity: number;
+  };
   rating: string;
   gates_passed: number;
   stocks: string;
@@ -19,11 +30,11 @@ function parseMarkdownReport(report: string): { date: string; sectors: SectorPre
   if (!report) return null;
 
   // Extract date
-  const dateMatch = report.match(/日期:\s*(\d{4}-\d{2}-\d{2})/);
+  const dateMatch = report.match(/日期:[\s]*(\d{4}-\d{2}-\d{2})/);
   const date = dateMatch ? dateMatch[1] : "";
 
   const sectors: SectorPredictionItem[] = [];
-  
+
   // Parse table rows: | rank | name | total | sd | cp | tb | pc | cf | ve | rating |
   const tableRegex = /\|\s*(\d+)\s*\|\s*\*\*([^*]+)\*\*\s*\|\s*\*\*(\d+)\*\*\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*([^|]+)\s*\|/g;
   let match;
@@ -48,15 +59,14 @@ function parseMarkdownReport(report: string): { date: string; sectors: SectorPre
 
   // Parse details for each sector
   for (const sec of sectors) {
-    // Find section for this sector
     const sectionRegex = new RegExp(
-      `###\\s*[^` + `]*` + `—\\s*${sec.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^#]*?(?=###|##\\s*🏆|---|$)`,
+      `###\\s*[^#]*—\\s*${sec.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^#]*?(?=###|##\\s*🏆|---|$)`,
       "s"
     );
     const sectionMatch = report.match(sectionRegex);
     if (sectionMatch) {
       const section = sectionMatch[0];
-      
+
       // Extract scores details
       sec.details = {};
       const scoreDetailRegex = /\|\s*(供需失衡度|周期位置|技术突破|政策催化|资金信号|估值弹性)\s*\|\s*(\d+)\/10\s*\|\s*([^|]*)\s*\|/g;
@@ -99,18 +109,18 @@ function parseMarkdownReport(report: string): { date: string; sectors: SectorPre
   return { date, sectors };
 }
 
-// 评分颜色映射
+// 评分颜色
 function scoreColor(s: number): string {
-  if (s >= 8) return "text-green-600 dark:text-green-400 font-bold";
-  if (s >= 6) return "text-yellow-600 dark:text-yellow-400";
-  return "text-red-500 dark:text-red-400";
+  if (s >= 8) return "green";
+  if (s >= 6) return "gold";
+  return "red";
 }
 
-function ratingBadge(rating: string) {
-  if (rating.includes("S级")) return "bg-red-600 text-white";
-  if (rating.includes("A级")) return "bg-orange-500 text-white";
-  if (rating.includes("B级")) return "bg-yellow-500 text-white";
-  return "bg-gray-400 text-white";
+function ratingColor(rating: string): string {
+  if (rating.includes("S级")) return "red";
+  if (rating.includes("A级")) return "orange";
+  if (rating.includes("B级")) return "gold";
+  return "default";
 }
 
 const FACTOR_LABELS: Record<string, string> = {
@@ -157,190 +167,215 @@ export default function SectorPrediction() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
+      <div style={{ display: "flex", justifyContent: "center", padding: "80px 0" }}>
+        <Spin size="large" />
       </div>
     );
   }
 
   if (isError || !currentData) {
     return (
-      <div className="text-center py-20 text-gray-500">
-        <p className="text-lg mb-2">暂无主线预判数据</p>
-        <p className="text-sm">请先导入九大板块数据后运行预判引擎</p>
+      <div style={{ textAlign: "center", padding: "80px 0" }}>
+        <Empty description="暂无主线预判数据">
+          <Text type="secondary">请先导入九大板块数据后运行预判引擎</Text>
+        </Empty>
       </div>
     );
   }
 
+  // Build table columns
+  const factorColumns = Object.keys(FACTOR_LABELS).map((key) => ({
+    title: FACTOR_LABELS[key],
+    dataIndex: ["scores", key],
+    key: key,
+    width: 60,
+    align: "center" as const,
+    render: (val: number) => (
+      <Text strong style={{ color: scoreColor(val) === "green" ? "#52c41a" : scoreColor(val) === "gold" ? "#faad14" : "#ff4d4f" }}>
+        {val}
+      </Text>
+    ),
+  }));
+
+  const columns = [
+    {
+      title: "#",
+      dataIndex: "rank",
+      key: "rank",
+      width: 50,
+      render: (val: number) => <Text type="secondary">{val}</Text>,
+    },
+    {
+      title: "板块",
+      dataIndex: "name",
+      key: "name",
+      render: (val: string) => <Text strong>{val}</Text>,
+    },
+    {
+      title: "总分",
+      dataIndex: "total",
+      key: "total",
+      width: 80,
+      align: "right" as const,
+      render: (val: number) => (
+        <Text strong code style={{ color: val >= 65 ? "#52c41a" : val >= 50 ? "#faad14" : undefined }}>
+          {val}
+        </Text>
+      ),
+    },
+    ...factorColumns,
+    {
+      title: "关卡",
+      dataIndex: "gates_passed",
+      key: "gates_passed",
+      width: 70,
+      align: "center" as const,
+      render: (val: number) => (
+        <Text style={{ color: val >= 3 ? "#52c41a" : val >= 2 ? "#faad14" : undefined }}>
+          {val}/4
+        </Text>
+      ),
+    },
+    {
+      title: "评级",
+      dataIndex: "rating",
+      key: "rating",
+      width: 80,
+      render: (val: string) => (
+        <Tag color={ratingColor(val)}>{val.slice(0, 2)}</Tag>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
+    <Space direction="vertical" size="large" style={{ width: "100%" }}>
       {/* 头部 */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">🔮 主线预判</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            基于六因子+四关卡模型，预判下一个主线板块
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setShowAll(!showAll)}
-            className={`px-3 py-1.5 rounded text-sm ${
-              showAll
-                ? "bg-blue-600 text-white"
-                : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
-            }`}
-          >
-            {showAll ? "收起" : "查看历史"}
-          </button>
-          <button
-            onClick={() => queryClient.invalidateQueries({ queryKey: ["sector-prediction"] })}
-            className="px-3 py-1.5 rounded text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300"
-          >
-            🔄 刷新
-          </button>
-        </div>
-      </div>
+      <Row justify="space-between" align="middle">
+        <Col>
+          <Title level={2} style={{ margin: 0 }}>🔮 主线预判</Title>
+          <Text type="secondary">基于六因子+四关卡模型，预判下一个主线板块</Text>
+        </Col>
+        <Col>
+          <Space>
+            <Button
+              type={showAll ? "primary" : "default"}
+              icon={<HistoryOutlined />}
+              onClick={() => setShowAll(!showAll)}
+            >
+              {showAll ? "收起" : "查看历史"}
+            </Button>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => queryClient.invalidateQueries({ queryKey: ["sector-prediction"] })}
+            >
+              刷新
+            </Button>
+          </Space>
+        </Col>
+      </Row>
 
       {/* 历史日期选择 */}
       {showAll && Array.isArray(predictionData) && predictionData.length > 1 && (
-        <div className="flex gap-2 flex-wrap">
+        <Space wrap>
           {predictionData.map((d: any) => (
-            <button
+            <Button
               key={d.date}
+              size="small"
+              type={(selectedDate || predictionData[0].date) === d.date ? "primary" : "default"}
+              icon={<CalendarOutlined />}
               onClick={() => setSelectedDate(d.date)}
-              className={`px-3 py-1 rounded text-sm ${
-                (selectedDate || predictionData[0].date) === d.date
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200"
-              }`}
             >
               {d.date.slice(5)}
-            </button>
+            </Button>
           ))}
-        </div>
+        </Space>
       )}
 
       {/* 当前日期 */}
-      <div className="text-sm text-gray-500">
+      <Text type="secondary">
         📅 {currentData.date} · {currentData.sectors.length} 个板块
-      </div>
+      </Text>
 
       {/* 评分汇总表 */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-50 dark:bg-gray-700">
-            <tr>
-              <th className="px-3 py-2 text-left">#</th>
-              <th className="px-3 py-2 text-left">板块</th>
-              <th className="px-3 py-2 text-right">总分</th>
-              {Object.keys(FACTOR_LABELS).map((k) => (
-                <th key={k} className="px-2 py-2 text-center text-xs" title={FACTOR_LABELS[k]}>
-                  {FACTOR_LABELS[k]}
-                </th>
-              ))}
-              <th className="px-3 py-2 text-center">关卡</th>
-              <th className="px-3 py-2 text-left">评级</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-            {currentData.sectors.map((s: SectorPredictionItem) => (
-              <tr
-                key={s.name}
-                onClick={() => setSelectedSector(s.name)}
-                className={`cursor-pointer transition-colors hover:bg-blue-50 dark:hover:bg-blue-900/20 ${
-                  selectedSector === s.name ? "bg-blue-50 dark:bg-blue-900/30 ring-1 ring-blue-300" : ""
-                }`}
-              >
-                <td className="px-3 py-2 text-gray-400">{s.rank}</td>
-                <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">{s.name}</td>
-                <td className={`px-3 py-2 text-right font-mono font-bold ${s.total >= 65 ? "text-green-600" : s.total >= 50 ? "text-yellow-600" : "text-gray-400"}`}>
-                  {s.total}
-                </td>
-                {Object.keys(FACTOR_LABELS).map((k) => (
-                  <td key={k} className={`px-2 py-2 text-center font-mono text-xs ${scoreColor((s.scores as any)[k])}`}>
-                    {(s.scores as any)[k]}
-                  </td>
-                ))}
-                <td className="px-3 py-2 text-center">
-                  <span className={`text-xs ${s.gates_passed >= 3 ? "text-green-600" : s.gates_passed >= 2 ? "text-yellow-600" : "text-gray-400"}`}>
-                    {s.gates_passed}/4
-                  </span>
-                </td>
-                <td className="px-3 py-2">
-                  <span className={`px-2 py-0.5 rounded text-xs ${ratingBadge(s.rating)}`}>
-                    {s.rating.slice(0, 2)}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Card bodyStyle={{ padding: 0 }}>
+        <Table
+          columns={columns}
+          dataSource={currentData.sectors}
+          rowKey="name"
+          pagination={false}
+          size="small"
+          scroll={{ x: 700 }}
+          onRow={(record) => ({
+            onClick: () => setSelectedSector(record.name),
+            style: {
+              cursor: "pointer",
+              background: selectedSector === record.name ? "#e6f7ff" : undefined,
+            },
+          })}
+        />
+      </Card>
 
       {/* 详情面板 */}
       {selectedDetail && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-              {selectedDetail.name} · 综合评分 {selectedDetail.total}
-            </h3>
-            <span className={`px-3 py-1 rounded-full text-sm font-medium ${ratingBadge(selectedDetail.rating)}`}>
-              {selectedDetail.rating}
-            </span>
-          </div>
-
+        <Card
+          title={
+            <Space>
+              <Text strong style={{ fontSize: 16 }}>{selectedDetail.name}</Text>
+              <Text type="secondary">· 综合评分 {selectedDetail.total}</Text>
+            </Space>
+          }
+          extra={
+            <Tag color={ratingColor(selectedDetail.rating)}>{selectedDetail.rating}</Tag>
+          }
+        >
           {/* 六因子详情 */}
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+          <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
             {Object.entries(FACTOR_LABELS).map(([key, label]) => (
-              <div key={key} className="bg-gray-50 dark:bg-gray-700 rounded p-3">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs text-gray-500">{label}</span>
-                  <span className={`text-lg font-bold ${scoreColor((selectedDetail.scores as any)[key])}`}>
-                    {(selectedDetail.scores as any)[key]}
-                    <span className="text-xs font-normal text-gray-400">/10</span>
-                  </span>
-                </div>
-                {selectedDetail.details?.[key] && (
-                  <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-                    {selectedDetail.details[key]}
-                  </p>
-                )}
-              </div>
+              <Col xs={12} md={8} key={key}>
+                <Card size="small">
+                  <Row justify="space-between" align="middle" style={{ marginBottom: 4 }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>{label}</Text>
+                    <Text strong style={{ fontSize: 18, color: scoreColor((selectedDetail.scores as any)[key]) === "green" ? "#52c41a" : scoreColor((selectedDetail.scores as any)[key]) === "gold" ? "#faad14" : "#ff4d4f" }}>
+                      {(selectedDetail.scores as any)[key]}
+                      <Text type="secondary" style={{ fontSize: 12 }}>/10</Text>
+                    </Text>
+                  </Row>
+                  {selectedDetail.details?.[key] && (
+                    <Text type="secondary" style={{ fontSize: 12 }}>{selectedDetail.details[key]}</Text>
+                  )}
+                </Card>
+              </Col>
             ))}
-          </div>
+          </Row>
 
           {/* 验证关卡 */}
           {selectedDetail.gate_msgs && selectedDetail.gate_msgs.length > 0 && (
-            <div className="mb-3">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <div style={{ marginBottom: 12 }}>
+              <Text strong style={{ fontSize: 13, display: "block", marginBottom: 8 }}>
                 验证关卡 (通过 {selectedDetail.gates_passed}/4)
-              </h4>
-              <div className="space-y-1">
+              </Text>
+              <Space direction="vertical" size={4} style={{ width: "100%" }}>
                 {selectedDetail.gate_msgs.map((gm: string, i: number) => (
-                  <div
+                  <Tag
                     key={i}
-                    className={`text-xs px-3 py-1.5 rounded ${
-                      gm.includes("✅")
-                        ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400"
-                        : "bg-red-50 dark:bg-red-900/20 text-red-500 dark:text-red-400"
-                    }`}
+                    color={gm.includes("✅") ? "success" : "error"}
+                    style={{ padding: "4px 12px", fontSize: 12 }}
                   >
                     {gm}
-                  </div>
+                  </Tag>
                 ))}
-              </div>
+              </Space>
             </div>
           )}
 
           {/* 领涨标的 */}
           {selectedDetail.stocks && (
-            <div className="text-sm text-gray-600 dark:text-gray-400">
-              <span className="font-medium">领涨标的:</span> {selectedDetail.stocks}
-            </div>
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              <Text strong>领涨标的:</Text> {selectedDetail.stocks}
+            </Text>
           )}
-        </div>
+        </Card>
       )}
-    </div>
+    </Space>
   );
 }

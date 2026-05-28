@@ -1,7 +1,11 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { Card, Table, Button, Tag, Space, Typography, Spin, Statistic, Collapse } from "antd";
+import { ArrowLeftOutlined, CaretDownOutlined } from "@ant-design/icons";
+import type { ColumnsType } from "antd/es/table";
 
+const { Title, Text } = Typography;
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:35000";
 
 interface Trade {
@@ -62,6 +66,29 @@ function fmtPct(v: number | null): string {
   return (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
 }
 
+const tradeColumns: ColumnsType<Trade> = [
+  {
+    title: '时间', dataIndex: 'created_at', key: 'created_at', width: 160,
+    render: (v: string) => <Text style={{ fontSize: 12 }}>{new Date(v).toLocaleString("zh-CN")}</Text>,
+  },
+  {
+    title: '方向', dataIndex: 'direction', key: 'direction', width: 60,
+    render: (v: string) => (
+      <Tag color={v === "buy" ? "red" : "green"}>{v === "buy" ? "买入" : "卖出"}</Tag>
+    ),
+  },
+  { title: '价格', dataIndex: 'price', key: 'price', align: 'right', width: 80, render: (v: number) => v.toFixed(2) },
+  { title: '数量', dataIndex: 'quantity', key: 'quantity', align: 'right', width: 70 },
+  { title: '金额', dataIndex: 'amount', key: 'amount', align: 'right', width: 100, render: (v: number) => fmtMoney(v) },
+  { title: '佣金', dataIndex: 'commission', key: 'commission', align: 'right', width: 70, render: (v: number) => v.toFixed(2) },
+  { title: '印花税', dataIndex: 'tax', key: 'tax', align: 'right', width: 70, render: (v: number) => v.toFixed(2) },
+  {
+    title: '类型', dataIndex: 'order_type', key: 'order_type', width: 70,
+    render: (v: string) => <Tag>{v === "manual" ? "手动" : v === "signal" ? "信号" : v}</Tag>,
+  },
+  { title: '备注', dataIndex: 'note', key: 'note', width: 120, ellipsis: true, render: (v: string | null) => <Text type="secondary">{v || "-"}</Text> },
+];
+
 export default function PaperBreakdown() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -80,20 +107,21 @@ export default function PaperBreakdown() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full"></div>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 256 }}>
+        <Spin />
       </div>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="text-center py-16">
-        <div className="text-6xl mb-4">📭</div>
-        <p className="text-gray-500">数据加载失败</p>
-        <button onClick={() => navigate("/paper/rankings")} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg">
+      <div style={{ textAlign: 'center', padding: 64 }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>📭</div>
+        <Text type="secondary">数据加载失败</Text>
+        <br />
+        <Button type="primary" style={{ marginTop: 16 }} onClick={() => navigate("/paper/rankings")}>
           返回排名
-        </button>
+        </Button>
       </div>
     );
   }
@@ -102,179 +130,122 @@ export default function PaperBreakdown() {
   const sortedStocks = [...data.stocks].sort((a, b) => b.total_pnl - a.total_pnl);
 
   return (
-    <div className="space-y-6">
+    <Space direction="vertical" size="large" style={{ width: '100%' }}>
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate("/paper/rankings")} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-          </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Space>
+          <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate("/paper/rankings")} />
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-              {data.account_name}
-            </h1>
-            <p className="text-sm text-gray-500">个股盈亏明细</p>
+            <Title level={3} style={{ margin: 0 }}>{data.account_name}</Title>
+            <Text type="secondary">个股盈亏明细</Text>
           </div>
-        </div>
-        <button
-          onClick={() => navigate(`/paper/${accountId}`)}
-          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-        >
+        </Space>
+        <Button type="primary" onClick={() => navigate(`/paper/${accountId}`)}>
           查看账户详情
-        </button>
+        </Button>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-xs text-gray-500 dark:text-gray-400">总资产</p>
-          <p className="text-lg font-bold text-gray-900 dark:text-white">{fmtMoney(data.total_value)}</p>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-xs text-gray-500 dark:text-gray-400">总盈亏</p>
-          <p className={`text-lg font-bold ${data.total_pnl >= 0 ? "text-red-500" : "text-green-500"}`}>
-            {fmtMoney(data.total_pnl)}
-          </p>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-xs text-gray-500 dark:text-gray-400">收益率</p>
-          <p className={`text-lg font-bold ${data.total_profit_pct >= 0 ? "text-red-500" : "text-green-500"}`}>
-            {fmtPct(data.total_profit_pct)}
-          </p>
-        </div>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-          <p className="text-xs text-gray-500 dark:text-gray-400">交易股票数</p>
-          <p className="text-lg font-bold text-gray-900 dark:text-white">{data.stock_count} 只</p>
-        </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+        <Card size="small">
+          <Statistic title="总资产" value={fmtMoney(data.total_value)}
+            valueStyle={{ fontWeight: 'bold' }} />
+        </Card>
+        <Card size="small">
+          <Statistic title="总盈亏" value={fmtMoney(data.total_pnl)}
+            valueStyle={{ fontWeight: 'bold', color: data.total_pnl >= 0 ? '#ff4d4f' : '#52c41a' }} />
+        </Card>
+        <Card size="small">
+          <Statistic title="收益率" value={fmtPct(data.total_profit_pct)}
+            valueStyle={{ fontWeight: 'bold', color: data.total_profit_pct >= 0 ? '#ff4d4f' : '#52c41a' }} />
+        </Card>
+        <Card size="small">
+          <Statistic title="交易股票数" value={`${data.stock_count} 只`}
+            valueStyle={{ fontWeight: 'bold' }} />
+        </Card>
       </div>
 
       {/* Per-Stock Breakdown */}
-      <div className="space-y-4">
+      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         {sortedStocks.map((stock) => {
           const isExpanded = expandedStock === stock.code;
           return (
-            <div
+            <Card
               key={stock.code}
-              className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden"
+              size="small"
+              styles={{ body: { padding: 0 } }}
             >
               {/* Stock Header (clickable) */}
               <div
-                className="p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors"
+                style={{
+                  padding: '12px 16px', display: 'flex', justifyContent: 'space-between',
+                  alignItems: 'center', cursor: 'pointer',
+                }}
                 onClick={() => setExpandedStock(isExpanded ? null : stock.code)}
               >
-                <div className="flex items-center gap-3">
-                  <div>
-                    <span className="font-mono text-sm text-gray-400">{stock.code}</span>
-                    <span className="ml-2 font-semibold text-gray-900 dark:text-white">{stock.name}</span>
-                  </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    stock.current_position > 0
-                      ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
-                      : "bg-gray-100 dark:bg-gray-700 text-gray-500"
-                  }`}>
+                <Space>
+                  <Text type="secondary" style={{ fontFamily: 'monospace', fontSize: 13 }}>{stock.code}</Text>
+                  <Text strong>{stock.name}</Text>
+                  <Tag color={stock.current_position > 0 ? "blue" : "default"}>
                     {stock.current_position > 0 ? `持仓${stock.current_position}股` : "已清仓"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-6">
-                  <div className="text-right">
-                    <p className="text-xs text-gray-400">总盈亏</p>
-                    <p className={`font-bold ${stock.total_pnl >= 0 ? "text-red-500" : "text-green-500"}`}>
+                  </Tag>
+                </Space>
+                <Space size="large">
+                  <div style={{ textAlign: 'right' }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>总盈亏</Text>
+                    <Text strong style={{ color: stock.total_pnl >= 0 ? '#ff4d4f' : '#52c41a' }}>
                       {fmtMoney(stock.total_pnl)}
-                    </p>
+                    </Text>
                   </div>
-                  <div className="text-right">
-                    <p className="text-xs text-gray-400">交易</p>
-                    <p className="font-medium text-gray-700 dark:text-gray-300">{stock.trade_count}次</p>
+                  <div style={{ textAlign: 'right' }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>交易</Text>
+                    <Text>{stock.trade_count}次</Text>
                   </div>
-                  <svg
-                    className={`h-5 w-5 text-gray-400 transition-transform ${isExpanded ? "rotate-180" : ""}`}
-                    fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </div>
+                  <CaretDownOutlined
+                    style={{
+                      transition: 'transform 0.3s',
+                      transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                      color: '#8c8c8c',
+                    }}
+                  />
+                </Space>
               </div>
 
               {/* Expanded Detail */}
               {isExpanded && (
-                <div className="border-t border-gray-100 dark:border-gray-700">
+                <div style={{ borderTop: '1px solid #f0f0f0' }}>
                   {/* Summary Row */}
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 p-4 bg-gray-50 dark:bg-gray-900/30 text-sm">
-                    <div>
-                      <p className="text-gray-400 text-xs">买入总额</p>
-                      <p className="font-medium text-gray-900 dark:text-white">{fmtMoney(stock.total_buy)}</p>
-                    </div>
-                    <div>
-                      <p className="text-gray-400 text-xs">卖出总额</p>
-                      <p className="font-medium text-gray-900 dark:text-white">{fmtMoney(stock.total_sell)}</p>
-                    </div>
-                    <div>
-                      <p className="text-gray-400 text-xs">已实现盈亏</p>
-                      <p className={`font-medium ${stock.realized_pnl >= 0 ? "text-red-500" : "text-green-500"}`}>
-                        {fmtMoney(stock.realized_pnl)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-gray-400 text-xs">未实现盈亏</p>
-                      <p className={`font-medium ${stock.current_unrealized_pnl >= 0 ? "text-red-500" : "text-green-500"}`}>
-                        {fmtMoney(stock.current_unrealized_pnl)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-gray-400 text-xs">费用合计</p>
-                      <p className="font-medium text-gray-700 dark:text-gray-300">
-                        {fmtMoney(stock.total_commission + stock.total_tax)}
-                      </p>
-                    </div>
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16,
+                    padding: 16, background: '#fafafa',
+                  }}>
+                    <Statistic title="买入总额" value={fmtMoney(stock.total_buy)}
+                      valueStyle={{ fontSize: 14, fontWeight: 500 }} />
+                    <Statistic title="卖出总额" value={fmtMoney(stock.total_sell)}
+                      valueStyle={{ fontSize: 14, fontWeight: 500 }} />
+                    <Statistic title="已实现盈亏" value={fmtMoney(stock.realized_pnl)}
+                      valueStyle={{ fontSize: 14, fontWeight: 500, color: stock.realized_pnl >= 0 ? '#ff4d4f' : '#52c41a' }} />
+                    <Statistic title="未实现盈亏" value={fmtMoney(stock.current_unrealized_pnl)}
+                      valueStyle={{ fontSize: 14, fontWeight: 500, color: stock.current_unrealized_pnl >= 0 ? '#ff4d4f' : '#52c41a' }} />
+                    <Statistic title="费用合计" value={fmtMoney(stock.total_commission + stock.total_tax)}
+                      valueStyle={{ fontSize: 14, fontWeight: 500 }} />
                   </div>
 
                   {/* Trade Records */}
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead className="bg-gray-50 dark:bg-gray-900/50 text-gray-500">
-                        <tr>
-                          <th className="text-left px-4 py-2">时间</th>
-                          <th className="text-left px-4 py-2">方向</th>
-                          <th className="text-right px-4 py-2">价格</th>
-                          <th className="text-right px-4 py-2">数量</th>
-                          <th className="text-right px-4 py-2">金额</th>
-                          <th className="text-right px-4 py-2">佣金</th>
-                          <th className="text-right px-4 py-2">印花税</th>
-                          <th className="text-left px-4 py-2">类型</th>
-                          <th className="text-left px-4 py-2">备注</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                        {stock.trades.map((t) => (
-                          <tr key={t.order_id} className="hover:bg-gray-50 dark:hover:bg-gray-750">
-                            <td className="px-4 py-2 text-gray-500">{new Date(t.created_at).toLocaleString("zh-CN")}</td>
-                            <td className={`px-4 py-2 font-medium ${t.direction === "buy" ? "text-red-500" : "text-green-500"}`}>
-                              {t.direction === "buy" ? "买入" : "卖出"}
-                            </td>
-                            <td className="px-4 py-2 text-right text-gray-900 dark:text-white">{t.price.toFixed(2)}</td>
-                            <td className="px-4 py-2 text-right text-gray-900 dark:text-white">{t.quantity}</td>
-                            <td className="px-4 py-2 text-right text-gray-900 dark:text-white">{fmtMoney(t.amount)}</td>
-                            <td className="px-4 py-2 text-right text-gray-500">{t.commission.toFixed(2)}</td>
-                            <td className="px-4 py-2 text-right text-gray-500">{t.tax.toFixed(2)}</td>
-                            <td className="px-4 py-2">
-                              <span className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
-                                {t.order_type === "manual" ? "手动" : t.order_type === "signal" ? "信号" : t.order_type}
-                              </span>
-                            </td>
-                            <td className="px-4 py-2 text-gray-500 max-w-[120px] truncate">{t.note || "-"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  <Table<Trade>
+                    columns={tradeColumns}
+                    dataSource={stock.trades}
+                    rowKey="order_id"
+                    pagination={false}
+                    size="small"
+                    scroll={{ x: 900 }}
+                  />
                 </div>
               )}
-            </div>
+            </Card>
           );
         })}
-      </div>
-    </div>
+      </Space>
+    </Space>
   );
 }
