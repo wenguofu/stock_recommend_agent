@@ -1,10 +1,11 @@
 /**
  * 配置状态管理
+ * 非敏感配置 (URL/Provider) → localStorage 持久化
+ * API密钥 → sessionStorage (关闭标签页后清除)
  */
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 
-// 统一的 API 默认地址 — 修改 .env 即可全局生效
 const DEFAULT_API_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:35000';
 
 interface ConfigState {
@@ -24,7 +25,8 @@ interface ConfigState {
   setDefaultAiProvider: (provider: string) => void;
 }
 
-export const useConfigStore = create<ConfigState>()(
+// localStorage — 只持久化非敏感配置
+const nonSensitiveStore = create<ConfigState>()(
   persist(
     (set) => ({
       apiBaseURL: DEFAULT_API_URL,
@@ -44,6 +46,34 @@ export const useConfigStore = create<ConfigState>()(
     }),
     {
       name: 'stock-config',
+      // 只持久化非敏感字段，密钥仅保存在 sessionStorage
+      storage: createJSONStorage(() => sessionStorage),
+      partialize: (state) => ({
+        openaiApiKey: state.openaiApiKey,
+        deepseekApiKey: state.deepseekApiKey,
+        qwenApiKey: state.qwenApiKey,
+        geminiApiKey: state.geminiApiKey,
+        grokApiKey: state.grokApiKey,
+        defaultAiProvider: state.defaultAiProvider,
+      }),
     }
   )
 );
+
+export const useConfigStore = nonSensitiveStore;
+
+// 同步 baseURL 到 localStorage（独立于 sessionStorage 的密钥）
+const savedUrl = localStorage.getItem('stock-base-url');
+if (savedUrl) {
+  try {
+    const store = useConfigStore.getState();
+    if (store.apiBaseURL === DEFAULT_API_URL) {
+      store.setApiBaseURL(savedUrl);
+    }
+  } catch { /* ignore */ }
+}
+
+// 订阅 baseURL 变化并持久化到 localStorage
+useConfigStore.subscribe((state) => {
+  localStorage.setItem('stock-base-url', state.apiBaseURL);
+});

@@ -26,6 +26,10 @@ CORS(app)
 
 app.config['JSON_AS_ASCII'] = False
 
+# ── 认证中间件 ──
+from auth_middleware import register_auth
+register_auth(app)
+
 # ── 统一错误处理 ──
 from error_handler import register_error_handler
 register_error_handler(app)
@@ -82,6 +86,9 @@ app.config['JSON_AS_ASCII'] = False
 def register_routes():
     from api_routes import register_routes as register
     register(app)
+    # 注册AI辩论+分析API
+    from debate_routes import register_debate_routes
+    register_debate_routes(app)
     # 注册风险管理API
     from risk_routes import register_risk_routes
     register_risk_routes(app)
@@ -91,19 +98,31 @@ def register_routes():
     # 注册中长线交易API
     from midline_routes import register_midline_routes
     register_midline_routes(app)
+    # 注册推荐跟踪API
+    from recommendation_tracker import register_track_routes
+    register_track_routes(app)
 
 def init_database():
     """初始化数据库和默认配置"""
     try:
         from init_agents import init_default_agents
         init_default_agents()
+        # 确保新增表被创建
+        from models import engine, Base
+        from recommendation_tracker import RecommendationTrack
+        Base.metadata.create_all(engine)
+        print("[初始化] 数据库表已确认")
     except Exception as e:
         print(f"[初始化] 数据库初始化失败: {e}")
 
 register_routes()
 init_database()
 
-# 启动内置任务调度器（替代 Hermes cron）
+# 启动 WebSocket 服务
+from websocket_routes import init_socketio
+socketio = init_socketio(app)
+
+# 启动内置任务调度器
 from scheduler import start_scheduler
 scheduler = start_scheduler()
 print(f"[调度器] 已启动，{len(scheduler.tasks)}个任务")
@@ -115,7 +134,12 @@ if __name__ == '__main__':
     print("=" * 60)
     print("股票数据API服务启动")
     print("=" * 60)
-    print(f"访问 http://localhost:{PORT} 查看API文档")
+    print(f"REST API: http://localhost:{PORT}")
+    if socketio:
+        print(f"WebSocket: ws://localhost:{PORT}")
     print("调度器运行中...")
     print("=" * 60)
-    app.run(host='0.0.0.0', port=PORT, debug=DEBUG)
+    if socketio:
+        socketio.run(app, host='0.0.0.0', port=PORT, debug=DEBUG)
+    else:
+        app.run(host='0.0.0.0', port=PORT, debug=DEBUG)

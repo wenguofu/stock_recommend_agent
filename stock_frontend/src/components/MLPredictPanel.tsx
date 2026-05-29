@@ -1,4 +1,4 @@
-import { Card, Tag, Typography, Row, Col, Divider } from 'antd';
+import { Card, Tag, Typography, Row, Col, Divider, Alert } from 'antd';
 import { RobotOutlined, ArrowUpOutlined, ArrowDownOutlined, MinusOutlined } from '@ant-design/icons';
 
 const { Text, Title } = Typography;
@@ -20,7 +20,13 @@ interface Props {
 }
 
 export default function MLPredictPanel({ mlData }: Props) {
-  if (!mlData?.success) return null;
+  if (!mlData?.success) {
+    return (
+      <Card size="small" title="ML预测">
+        <Alert message="ML预测数据不足" description="该股票历史数据不足，无法生成机器学习预测。尝试换一只交易时间更长的股票。" type="info" showIcon />
+      </Card>
+    );
+  }
 
   const confLabel = mlData.confidence === 'high' ? '高' : mlData.confidence === 'medium' ? '中' : '低';
   const confColor = mlData.confidence === 'high' ? 'green' : mlData.confidence === 'medium' ? 'gold' : 'default';

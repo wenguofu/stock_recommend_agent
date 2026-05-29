@@ -6,9 +6,12 @@
 所有函数返回可 JSON 序列化的 dict，而非 ORM 对象。
 """
 
+import logging
 import traceback
 from datetime import datetime
 from typing import Optional, Dict, Any, List
+
+logger = logging.getLogger('paper_trading')
 
 from models import (
     SessionLocal,
@@ -170,8 +173,9 @@ def create_order(
             parts = raw.split("~")
             if len(parts) > 3:
                 market_price = float(parts[3])
-                # 允许价格偏差不超过 5% (非交易时段使用最后收盘价，偏差放宽到10%)
-                tolerance = 0.10
+                # 价格容差: 交易时段3%, 非交易时段5%
+                from scheduler import is_trading_hours
+                tolerance = 0.03 if is_trading_hours() else 0.05
                 deviation = abs(price - market_price) / market_price
                 if deviation > tolerance:
                     raise ValueError(
@@ -184,6 +188,57 @@ def create_order(
         except Exception as e:
             # 网络异常时放宽检查，但记录警告
             print(f"[警告] 实盘价格验证失败，跳过检查: {e}")
+
+        # === AI Risk Control: Hard constraint validation ===
+        try:
+            from risk_control.hard_constraints import validate_order, ConstraintConfig
+            from risk_control.position_guard import get_current_exposures
+
+            exposures = get_current_exposures(account_id)
+            if exposures:
+                sector = 'default'
+                # Determine sector from code prefix
+                prefix = code[:2] if len(code) >= 2 else ''
+                sector_map = {
+                    '60': 'Shanghai', '68': 'STAR',
+                    '00': 'Shenzhen', '30': 'ChiNext',
+                }
+                sector = sector_map.get(prefix, 'Other')
+
+                # Build sector exposure map
+                sector_exposure = {}
+                for pos in exposures.get('positions', []):
+                    p_code = pos.get('code', '')
+                    p_prefix = p_code[:2] if len(p_code) >= 2 else ''
+                    p_sector = sector_map.get(p_prefix, 'Other')
+                    sector_exposure[p_sector] = sector_exposure.get(p_sector, 0) + pos.get('market_value', 0)
+
+                result = validate_order(
+                    action='buy' if direction == 'buy' else 'sell',
+                    target_code=code,
+                    target_sector=sector,
+                    order_amount=price * quantity,
+                    portfolio_value=exposures.get('portfolio_value', 100000),
+                    current_positions=exposures.get('positions', []),
+                    sector_exposure_map=sector_exposure,
+                    current_daily_pnl_pct=exposures.get('daily_pnl_pct', 0),
+                )
+
+                if not result.passed:
+                    error_msg = '; '.join(result.violations)
+                    logger.warning(f"Risk control blocked order for {code}: {error_msg}")
+                    # Return error to caller
+                    return {
+                        'success': False,
+                        'error': f'Risk control: {error_msg}',
+                        'violations': result.violations,
+                        'warnings': result.warnings,
+                    }
+        except ImportError as e:
+            logger.debug(f"Risk control not available: {e}")
+        except Exception as e:
+            logger.warning(f"Risk control check failed (allowing order): {e}")
+        # === End AI Risk Control ===
 
         # ── 计算费用 ──
         amount = price * quantity

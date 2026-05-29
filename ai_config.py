@@ -15,7 +15,7 @@ PROVIDER_ENV_MAP = {
 
 def get_api_key(provider: str, db_key: str = "") -> str:
     """
-    获取 AI 密钥：环境变量 > DB 存储 > 空字符串
+    获取 AI 密钥：环境变量 > DB 存储 > Config表 > 空字符串
 
     Args:
         provider: AI provider 名称 (openai/deepseek/qwen/gemini/grok)
@@ -24,7 +24,23 @@ def get_api_key(provider: str, db_key: str = "") -> str:
     env_var = PROVIDER_ENV_MAP.get(provider.lower(), "")
     if env_var and os.environ.get(env_var):
         return os.environ[env_var]
-    return db_key or ""
+    if db_key:
+        return db_key
+
+    # Last resort: check Config table
+    try:
+        from models import SessionLocal, Config
+        db = SessionLocal()
+        try:
+            row = db.query(Config).filter(Config.key == f'{provider}_api_key').first()
+            if row and row.value:
+                return row.value
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+    return ""
 
 
 def has_env_key(provider: str) -> bool:

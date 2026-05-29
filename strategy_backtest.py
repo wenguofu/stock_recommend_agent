@@ -314,10 +314,9 @@ def score_historical(row: pd.Series, strategy: str, pe: float = 30) -> float:
     if "turnover_est" in row.index:
         to = float(row.get("turnover_est", to))
     
-    # ⚠️ 历史回测中 sector_heat = 0
-    # 这意味着 sector_momentum 策略在历史回测中可能比实盘低估
-    # 这是保守估计——实际板块热点会带来额外加分
-    sector_heat = 0
+    # ⚠️  板块热度在历史回测中默认为25 (中等偏上；sector_momentum依赖此项)
+    # 实盘时此值由 strategy_engine 动态计算 (0-100)
+    sector_heat = 25
     
     # ── 通用因子 ──
     if cp >= 9.5:
@@ -423,6 +422,8 @@ def backtest_strategy(
     df = df.reset_index(drop=True)
     
     # 3. 获取PE（用于jichang策略）
+    # ⚠️  PE前瞻偏差：回测中统一使用最新PE，历史日期不可知当日PE
+    # 对jichang策略，额外运行PE=15/30/50的敏感性分析
     pe = get_pe_estimate(code)
     
     # 4. 逐日评分
@@ -457,47 +458,63 @@ def backtest_strategy(
         df[f"return_{fd}d"] = forward_returns
     
     # 7. 模拟交易
-    # 简单模式：每天只要出信号就买入（如果没持仓），持有 forward_days 天后卖出
+    # ⚠️  时序修正：第i天收盘后生成信号 → 第i+1天开盘执行
+    # 成本模型：佣金万2.5 (最低5元) + 卖出印花税0.1% + 滑点10bps
+    COMMISSION_RATE = 0.00025
+    MIN_COMMISSION = 5.0
+    STAMP_TAX_RATE = 0.001
+    SLIPPAGE_BPS = 10
+
+    # 时移信号
+    signals_shifted = np.zeros(len(df), dtype=int)
+    signals_shifted[1:] = df["signal"].values[:-1]
+    df["signal_shifted"] = signals_shifted
+
     trades = []
-    position = 0  # 0=空仓, 1=持仓
+    position = 0
     entry_idx = -1
     entry_price = 0
     entry_date = None
-    
-    for i in range(len(df)):
-        if position == 0 and df.iloc[i]["signal"] == 1:
-            # 买入
-            position = 1
+    entry_cost = 0  # 买入费用总额
+
+    for i in range(1, len(df)):
+        if position == 0 and df.iloc[i]["signal_shifted"] == 1:
+            # 买入：第i天开盘价执行
+            entry_price = df.iloc[i]["open"] * (1 + SLIPPAGE_BPS / 10000)
             entry_idx = i
-            entry_price = df.iloc[i]["close"]
             entry_date = str(df.iloc[i]["date"])[:10]
-        
+            entry_cost = max(entry_price * MIN_COMMISSION / COMMISSION_RATE * COMMISSION_RATE, MIN_COMMISSION)
+            position = 1
+
         elif position == 1 and (i - entry_idx) >= forward_days:
-            # 到持有期卖出
-            exit_price = df.iloc[i]["close"]
+            # 持有期满 — 第i天开盘价卖出
+            exit_price = df.iloc[i]["open"] * (1 - SLIPPAGE_BPS / 10000)
             exit_date = str(df.iloc[i]["date"])[:10]
-            pnl_pct = (exit_price - entry_price) / entry_price * 100
-            
-            # 期间最高/最低
+
+            # 总成本 (佣金+印花税)
+            total_cost = entry_cost + max(exit_price * COMMISSION_RATE, MIN_COMMISSION) + exit_price * STAMP_TAX_RATE
+            gross_pnl_pct = (exit_price - entry_price) / entry_price * 100
+            net_pnl_pct = gross_pnl_pct - (total_cost / entry_price) * 100
+
+            # 期间最高/最低 (基于原始close)
             slice_high = df.iloc[entry_idx:i+1]["high"].max()
             slice_low = df.iloc[entry_idx:i+1]["low"].min()
-            
+
             trades.append({
                 "entry_date": entry_date,
                 "exit_date": exit_date,
                 "entry_price": round(entry_price, 2),
                 "exit_price": round(exit_price, 2),
                 "hold_days": i - entry_idx,
-                "pnl_pct": round(pnl_pct, 2),
+                "pnl_pct": round(net_pnl_pct, 2),
+                "gross_pnl_pct": round(gross_pnl_pct, 2),
+                "total_cost": round(total_cost, 2),
                 "max_rise": round((slice_high - entry_price) / entry_price * 100, 2),
                 "max_fall": round((slice_low - entry_price) / entry_price * 100, 2),
                 "entry_score": round(float(df.iloc[entry_idx]["score"]), 1),
-                "is_win": pnl_pct > 0,
-            } | {
-                f"return_{fd}d": round(float(df.iloc[entry_idx][f"return_{fd}d"]), 2)
-                for fd in [1, 3, 5, 10, 20]
+                "is_win": net_pnl_pct > 0,
             })
-            
+
             position = 0
     
     # 8. 计算回测指标

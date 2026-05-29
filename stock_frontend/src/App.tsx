@@ -20,6 +20,8 @@ import BacktestPage from './pages/BacktestPage';
 import SectorPrediction from './pages/SectorPrediction';
 import Midline from './pages/Midline';
 import Layout from './components/Layout';
+import ErrorBoundary from './components/ErrorBoundary';
+import NotFound from './pages/NotFound';
 import './index.css';
 
 const queryClient = new QueryClient({
@@ -45,25 +47,28 @@ function App() {
         <QueryClientProvider client={queryClient}>
           <BrowserRouter>
             <Layout>
-              <Routes>
-                <Route path="/" element={<Home />} />
-                <Route path="/watchlist" element={<Watchlist />} />
-                <Route path="/stock/:code" element={<StockDetail />} />
-                <Route path="/tasks" element={<Tasks />} />
-                <Route path="/strategy" element={<StrategyRecommend />} />
-                <Route path="/strategies" element={<StrategyLibrary />} />
-                <Route path="/strategies/:id/run" element={<StrategyRun />} />
-                <Route path="/ai-debate" element={<AIDebate />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="/paper" element={<PaperAccounts />} />
-                <Route path="/paper/:id" element={<PaperDetail />} />
-                <Route path="/paper/rankings" element={<PaperRankings />} />
-                <Route path="/paper/breakdown/:id" element={<PaperBreakdown />} />
-                <Route path="/recommendations" element={<Recommendations />} />
-                <Route path="/backtest" element={<BacktestPage />} />
-                <Route path="/sector-prediction" element={<SectorPrediction />} />
-                <Route path="/midline" element={<Midline />} />
-              </Routes>
+              <ErrorBoundary>
+                <Routes>
+                  <Route path="/" element={<Home />} />
+                  <Route path="/watchlist" element={<Watchlist />} />
+                  <Route path="/stock/:code" element={<StockDetail />} />
+                  <Route path="/tasks" element={<Tasks />} />
+                  <Route path="/strategy" element={<StrategyRecommend />} />
+                  <Route path="/strategies" element={<StrategyLibrary />} />
+                  <Route path="/strategies/:id/run" element={<StrategyRun />} />
+                  <Route path="/ai-debate" element={<AIDebate />} />
+                  <Route path="/settings" element={<Settings />} />
+                  <Route path="/paper" element={<PaperAccounts />} />
+                  <Route path="/paper/:id" element={<PaperDetail />} />
+                  <Route path="/paper/rankings" element={<PaperRankings />} />
+                  <Route path="/paper/breakdown/:id" element={<PaperBreakdown />} />
+                  <Route path="/recommendations" element={<Recommendations />} />
+                  <Route path="/backtest" element={<BacktestPage />} />
+                  <Route path="/sector-prediction" element={<SectorPrediction />} />
+                  <Route path="/midline" element={<Midline />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </ErrorBoundary>
             </Layout>
           </BrowserRouter>
         </QueryClientProvider>

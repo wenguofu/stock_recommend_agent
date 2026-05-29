@@ -230,3 +230,28 @@ def register_risk_routes(app):
             return jsonify(result)
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500
+
+    # ── 组合风险报告 ──
+
+    @app.route('/api/risk/portfolio_report', methods=['POST'])
+    def api_portfolio_risk_report():
+        """
+        组合风险综合分析
+        Body: {"codes": ["300679", "603290"], "weights": [0.4, 0.6]}
+        """
+        from risk_management import portfolio_risk_report, portfolio_risk_text
+
+        data = request.get_json(silent=True) or {}
+        codes = data.get('codes', [])
+        weights = data.get('weights')
+
+        if not codes or len(codes) < 2:
+            return jsonify({'error': '至少需要2只股票'}), 400
+
+        try:
+            result = portfolio_risk_report(codes, weights)
+            if 'error' not in result:
+                result['summary_text'] = portfolio_risk_text(codes, weights)
+            return jsonify({'success': True, 'data': result})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500

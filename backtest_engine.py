@@ -94,7 +94,7 @@ def calc_bollinger(series: np.ndarray, period: int = 20, std_dev: float = 2.0):
 STRATEGY_PRESETS = {
     "ma_cross": {
         "name": "均线金叉策略",
-        "description": "短期均线上穿长期均线买入，下穿卖出",
+        "description": "短期均线上穿长期均线买入，下穿卖出。适合趋势明确的市场，震荡市中假信号较多。推荐参数：5/20（短线），10/60（中线）",
         "params": [
             {"key": "fast_period", "label": "短期均线", "type": "int", "default": 5, "min": 2, "max": 60},
             {"key": "slow_period", "label": "长期均线", "type": "int", "default": 20, "min": 5, "max": 120},
@@ -102,7 +102,7 @@ STRATEGY_PRESETS = {
     },
     "rsi_reversal": {
         "name": "RSI超买超卖策略",
-        "description": "RSI低于超卖线买入，高于超买线卖出",
+        "description": "RSI低于超卖线买入（超跌反弹），高于超买线卖出（高位回落）。适合震荡市，强趋势市中会过早离场。推荐：超卖30/超买70",
         "params": [
             {"key": "rsi_period", "label": "RSI周期", "type": "int", "default": 14, "min": 5, "max": 30},
             {"key": "oversold", "label": "超卖线", "type": "int", "default": 30, "min": 10, "max": 45},
@@ -111,7 +111,7 @@ STRATEGY_PRESETS = {
     },
     "macd_cross": {
         "name": "MACD金叉死叉策略",
-        "description": "DIF上穿DEA买入，下穿卖出",
+        "description": "DIF上穿DEA金叉买入，下穿死叉卖出。中长线趋势策略，信号较均线金叉更平滑但滞后性更强。经典参数：12/26/9",
         "params": [
             {"key": "fast", "label": "快线周期", "type": "int", "default": 12, "min": 5, "max": 30},
             {"key": "slow", "label": "慢线周期", "type": "int", "default": 26, "min": 10, "max": 60},
@@ -120,7 +120,7 @@ STRATEGY_PRESETS = {
     },
     "bollinger_break": {
         "name": "布林带突破策略",
-        "description": "价格突破上轨卖出，跌破下轨买入",
+        "description": "价格跌破下轨买入（超卖反弹），突破上轨卖出（超买回落）。震荡市中效果好，趋势突破时容易错过大行情。推荐：20日/2倍标准差",
         "params": [
             {"key": "period", "label": "布林周期", "type": "int", "default": 20, "min": 10, "max": 60},
             {"key": "std_dev", "label": "标准差倍数", "type": "float", "default": 2.0, "min": 1.0, "max": 3.5},
@@ -128,7 +128,7 @@ STRATEGY_PRESETS = {
     },
     "sar_parabolic": {
         "name": "SAR抛物线转向",
-        "description": "价格上穿SAR买入，下穿SAR卖出 — 强趋势跟随",
+        "description": "价格上穿SAR买入，下穿SAR卖出。强趋势市中效果极佳，跟随趋势直到反转。震荡市中频繁止损。需配合趋势过滤",
         "params": [
             {"key": "acceleration", "label": "加速因子", "type": "float", "default": 0.02, "min": 0.005, "max": 0.1},
             {"key": "maximum", "label": "最大加速", "type": "float", "default": 0.2, "min": 0.1, "max": 0.5},
@@ -136,7 +136,7 @@ STRATEGY_PRESETS = {
     },
     "adx_trend": {
         "name": "ADX趋势跟踪",
-        "description": "ADX>25开仓趋势方向，ADX<20平仓 — 趋势市利器",
+        "description": "ADX>25表示强趋势，顺势开仓；ADX<20表示无趋势，平仓观望。先过滤趋势再交易，比纯均线策略更稳健。推荐阈值：25",
         "params": [
             {"key": "adx_period", "label": "ADX周期", "type": "int", "default": 14, "min": 7, "max": 30},
             {"key": "threshold", "label": "趋势阈值", "type": "int", "default": 25, "min": 15, "max": 35},
@@ -144,7 +144,7 @@ STRATEGY_PRESETS = {
     },
     "stoch_kd": {
         "name": "KDJ随机指标",
-        "description": "K<20超卖买入，K>80超买卖出 — 震荡市",
+        "description": "K<20超卖买入，K>80超买卖出。对短期波动敏感，适合震荡市做波段。不适合单边趋势市（会反复打脸）。推荐：9/20/80",
         "params": [
             {"key": "k_period", "label": "K周期", "type": "int", "default": 9, "min": 5, "max": 21},
             {"key": "oversold", "label": "超卖线", "type": "int", "default": 20, "min": 10, "max": 35},
@@ -153,7 +153,7 @@ STRATEGY_PRESETS = {
     },
     "triple_ma": {
         "name": "三均线系统",
-        "description": "短>中>长多头排列买入，短<中<长空头排列卖出 — 大趋势",
+        "description": "快>中>慢多头排列买入，快<中<慢空头排列卖出。经典趋势系统，信号少但质量高。大周期大趋势不会错过。推荐：5/13/34（斐波那契数列）",
         "params": [
             {"key": "fast", "label": "快线", "type": "int", "default": 5, "min": 3, "max": 20},
             {"key": "mid", "label": "中线", "type": "int", "default": 13, "min": 8, "max": 40},
@@ -162,7 +162,7 @@ STRATEGY_PRESETS = {
     },
     "vwap_trend": {
         "name": "VWAP均价趋势",
-        "description": "价格在VWAP上方且VWAP上行买入，下方或VWAP下行卖出",
+        "description": "价格在VWAP上方+VWAP上行=强势买入；价格跌破VWAP或VWAP走平=卖出。机构常用基准，日内和短线效果最佳",
         "params": [
             {"key": "vwap_period", "label": "VWAP周期", "type": "int", "default": 20, "min": 5, "max": 60},
         ],
@@ -366,46 +366,60 @@ def run_backtest(
     # 3. 生成信号
     signals = generate_signals(df, strategy_type, params)
 
+    # 信号时移：第i天收盘后生成的信号，在第i+1天开盘执行
+    signals_shifted = np.zeros(len(df))
+    signals_shifted[1:] = signals[:-1]
+    signals = signals_shifted
+
+    # 滑点参数 (bp)
+    slippage_bps = params.get('slippage_bps', 10)
+
     # 4. 模拟交易
     cash = initial_capital
     shares = 0
     trades = []
     equity_curve = []
 
-    for i in range(len(df)):
+    for i in range(1, len(df)):  # 从第1天开始 (跳过第0天, 因为信号需要时移)
         row = df.iloc[i]
         price = row['close']
         date_str = str(row['date'])[:10]
         signal = signals[i]
 
-        # 开盘时执行信号（用开盘价）
+        # 第i天开盘执行前一天收盘后生成的信号
         open_price = row['open']
 
         if signal == 1 and cash > 0:
             # 买入：全仓
-            can_buy = int(cash / open_price / 100) * 100
+            # 加入滑点 (买方不利方向)
+            exec_price = open_price * (1 + slippage_bps / 10000)
+            can_buy = int(cash / exec_price / 100) * 100
             if can_buy >= 100:
-                cost = can_buy * open_price
-                commission = max(cost * 0.00025, 5)  # 万2.5，最低5元
+                cost = can_buy * exec_price
+                commission = max(cost * 0.00025, 5)
                 cash -= (cost + commission)
                 shares += can_buy
                 trades.append({
-                    'date': date_str, 'type': 'buy', 'price': round(open_price, 2),
+                    'date': date_str, 'type': 'buy', 'price': round(exec_price, 2),
                     'shares': can_buy, 'cost': round(cost, 2),
                     'commission': round(commission, 2),
+                    'slippage': round(can_buy * (exec_price - open_price), 2),
                     'cash_after': round(cash, 2),
                 })
 
         elif signal == -1 and shares > 0:
             # 卖出：清仓
-            proceeds = shares * open_price
+            # 加入滑点 (卖方不利方向)
+            exec_price = open_price * (1 - slippage_bps / 10000)
+            proceeds = shares * exec_price
             commission = max(proceeds * 0.00025, 5)
-            tax = proceeds * 0.001  # 印花税千1
+            tax = proceeds * 0.001
             cash += (proceeds - commission - tax)
             trades.append({
-                'date': date_str, 'type': 'sell', 'price': round(open_price, 2),
+                'date': date_str, 'type': 'sell', 'price': round(exec_price, 2),
                 'shares': shares, 'proceeds': round(proceeds, 2),
                 'commission': round(commission, 2), 'tax': round(tax, 2),
+                'slippage': round(shares * (open_price - exec_price), 2),
                 'cash_after': round(cash, 2),
             })
             shares = 0

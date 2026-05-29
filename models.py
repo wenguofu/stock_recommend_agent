@@ -401,7 +401,32 @@ class MarketAlertLog(Base):
 
 # 数据库初始化
 DB_PATH = os.path.join(os.path.dirname(__file__), 'database.db')
-engine = create_engine(f'sqlite:///{DB_PATH}', echo=False)
+
+engine = create_engine(
+    f'sqlite:///{DB_PATH}',
+    echo=False,
+    connect_args={
+        'check_same_thread': False,
+        'timeout': 15,  # busy timeout: wait up to 15s for lock release
+    },
+    pool_size=5,
+    max_overflow=10,
+    pool_pre_ping=True,
+    pool_recycle=300,
+)
+
+# 启用 WAL 模式 — 支持并发读写, 避免 "database is locked"
+from sqlalchemy import event
+@event.listens_for(engine, 'connect')
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    """连接建立时设置 SQLite pragma"""
+    cursor = dbapi_connection.cursor()
+    cursor.execute('PRAGMA journal_mode=WAL')
+    cursor.execute('PRAGMA synchronous=NORMAL')
+    cursor.execute('PRAGMA busy_timeout=15000')
+    cursor.execute('PRAGMA foreign_keys=ON')
+    cursor.close()
+
 Base.metadata.create_all(engine)
 SessionLocal = sessionmaker(bind=engine)
 

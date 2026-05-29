@@ -1,6 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""种子数据 - 从飞书文档导入策略库"""
+"""
+种子数据 - 策略库预设
+⚠️  DEPRECATED — 此模块定义的Agent仅作为文档存储于DB, 从未被 strategy_engine.py 调用。
+策略引擎使用硬编码评分函数 (strategy_engine.py score_by_strategy), 不依赖此处的Agent配置。
+如需整合, 请将策略→Agent映射实现到 strategy_engine.py 中。
+"""
 
 from models import SessionLocal, Strategy
 from db import get_strategies, create_strategy

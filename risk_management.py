@@ -699,7 +699,242 @@ def _assess_risk_grade(report: Dict) -> str:
         return '极高风险'
 
 
-# ═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════
+# 组合层面风险分析
+# ═══════════════════════════════════════════
+
+def portfolio_risk_report(
+    codes: list,
+    weights: list = None,
+    lookback_days: int = 120,
+) -> dict:
+    """
+    组合风险报告 — 分析多只股票的组合风险特征
+
+    Args:
+        codes: 股票代码列表
+        weights: 各股票权重（默认等权）
+        lookback_days: 回看天数
+
+    Returns:
+        dict: {correlation, concentration, portfolio_var, diversification_score, ...}
+    """
+    import math
+
+    n = len(codes)
+    if n < 2:
+        return {'error': '至少需要2只股票', 'code_count': n}
+
+    if weights is None:
+        weights = [1.0 / n] * n
+    else:
+        total_w = sum(weights)
+        weights = [w / total_w for w in weights]
+
+    # 1. 获取每只股票的日收益率
+    all_returns = {}
+    all_prices = {}
+    names = {}
+    for code in codes:
+        try:
+            kline = get_daily_kline(str(code), count=lookback_days + 30)
+            if kline is not None and len(kline) >= 30:
+                prices = kline['close'].values.astype(float)
+                returns = np.diff(prices) / prices[:-1]
+                returns = returns[~np.isnan(returns)]
+                if len(returns) >= 20:
+                    all_returns[code] = returns[-min(252, len(returns)):]
+                    all_prices[code] = prices[-min(252, len(prices)):]
+                    # 尝试获取名称
+                    try:
+                        from data_fetchers import get_realtime_data
+                        rt = get_realtime_data(str(code))
+                        if rt and isinstance(rt, dict):
+                            names[code] = rt.get('name', code)
+                        else:
+                            names[code] = code
+                    except Exception:
+                        names[code] = code
+        except Exception:
+            continue
+
+    valid_codes = list(all_returns.keys())
+    if len(valid_codes) < 2:
+        return {'error': '有效数据不足', 'valid_codes': valid_codes}
+
+    # 2. 对齐数据长度
+    min_len = min(len(all_returns[c]) for c in valid_codes)
+    returns_matrix = np.column_stack([all_returns[c][-min_len:] for c in valid_codes])
+
+    # 重新调整权重（只算有效股票）
+    valid_weights = []
+    valid_weights_map = {}
+    for i, code in enumerate(codes):
+        if code in valid_codes:
+            valid_weights_map[code] = weights[i]
+    w_sum = sum(valid_weights_map.values())
+    for code in valid_codes:
+        valid_weights.append(valid_weights_map[code] / w_sum)
+
+    w = np.array(valid_weights)
+
+    # 3. 相关性矩阵
+    corr_matrix = np.corrcoef(returns_matrix.T)
+    corr_pairs = []
+    for i in range(len(valid_codes)):
+        for j in range(i + 1, len(valid_codes)):
+            corr_pairs.append({
+                'pair': f"{names.get(valid_codes[i], valid_codes[i])} ↔ {names.get(valid_codes[j], valid_codes[j])}",
+                'correlation': round(float(corr_matrix[i, j]), 3),
+                'level': '高相关' if abs(corr_matrix[i, j]) > 0.7 else (
+                    '中等相关' if abs(corr_matrix[i, j]) > 0.3 else '低相关'
+                ),
+            })
+
+    avg_correlation = round(float(np.mean(np.abs(corr_matrix - np.eye(len(valid_codes))))), 3)
+
+    # 4. 组合收益率和波动率
+    portfolio_returns = returns_matrix @ w
+    portfolio_vol_daily = float(np.nanstd(portfolio_returns))
+    portfolio_vol_annual = portfolio_vol_daily * math.sqrt(252)
+    portfolio_return_annual = float(np.nanmean(portfolio_returns)) * 252
+
+    # 5. 组合 VaR / CVaR
+    portfolio_var_95 = float(np.percentile(portfolio_returns, 5))
+    tail_returns = portfolio_returns[portfolio_returns <= portfolio_var_95]
+    portfolio_cvar_95 = float(np.mean(tail_returns)) if len(tail_returns) > 0 else portfolio_var_95
+    portfolio_max_dd = calc_max_drawdown(np.cumprod(1 + portfolio_returns))
+
+    # 6. 行业集中度
+    sector_concentration = _calc_sector_concentration(valid_codes, w)
+
+    # 7. 分散化评分 (0-100)
+    divers_score = _calc_diversification_score(
+        avg_correlation, len(valid_codes), sector_concentration.get('hhi', 1.0)
+    )
+
+    # 8. 个股风险贡献
+    individual_var_contributions = []
+    for i, code in enumerate(valid_codes):
+        single_var = calc_var_historical(all_prices[code], confidence=0.95)
+        individual_var_contributions.append({
+            'code': code,
+            'name': names.get(code, code),
+            'weight_pct': round(float(w[i]) * 100, 1),
+            'var_95_pct': single_var.get('var_pct'),
+            'risk_contribution': round(float(w[i]) * float(single_var.get('var_pct', 0) or 0), 2),
+        })
+
+    return {
+        'code_count': len(valid_codes),
+        'codes': [{'code': c, 'name': names.get(c, c)} for c in valid_codes],
+        'weights': {c: round(float(w[i]) * 100, 1) for i, c in enumerate(valid_codes)},
+        'correlation': {
+            'avg_absolute_correlation': avg_correlation,
+            'pairs': corr_pairs,
+            'interpretation': '高相关性' if avg_correlation > 0.6 else (
+                '中等相关性' if avg_correlation > 0.3 else '低相关性（分散化好）'
+            ),
+        },
+        'portfolio_stats': {
+            'annual_return_pct': round(portfolio_return_annual * 100, 2),
+            'annual_volatility_pct': round(portfolio_vol_annual * 100, 2),
+            'sharpe_ratio': round(
+                (portfolio_return_annual - 0.02) / portfolio_vol_annual, 4
+            ) if portfolio_vol_annual > 0 else 0,
+            'var_95_pct': round(abs(portfolio_var_95) * 100, 2),
+            'cvar_95_pct': round(abs(portfolio_cvar_95) * 100, 2),
+            'max_drawdown_pct': portfolio_max_dd.get('max_drawdown_pct', 0),
+        },
+        'sector_concentration': sector_concentration,
+        'diversification_score': divers_score,
+        'individual_risks': individual_var_contributions,
+        'generated_at': datetime.now().isoformat(),
+    }
+
+
+def _calc_sector_concentration(codes: list, weights: np.ndarray) -> dict:
+    """计算行业集中度"""
+    try:
+        from models import SessionLocal
+        from db import get_latest_financial
+
+        db = SessionLocal()
+        sector_map = {}
+        try:
+            from sector_data import get_sector_stocks, get_all_sectors_with_stocks
+            all_sectors = get_all_sectors_with_stocks()
+            for code in codes:
+                for sector_name, stock_list in all_sectors.items():
+                    if code in stock_list:
+                        if code not in sector_map:
+                            sector_map[code] = []
+                        sector_map[code].append(sector_name)
+        except Exception:
+            pass
+        finally:
+            db.close()
+
+        # 计算各行业权重
+        sector_weights = {}
+        for i, code in enumerate(codes):
+            sectors = sector_map.get(code, ['未分类'])
+            for sector in sectors:
+                sector_weights[sector] = sector_weights.get(sector, 0) + float(weights[i])
+
+        # HHI 指数
+        hhi = sum((w / 100) ** 2 for w in sector_weights.values()) if sector_weights else 1.0
+
+        top_sector = max(sector_weights, key=sector_weights.get) if sector_weights else '未知'
+        top_pct = sector_weights.get(top_sector, 0) if sector_weights else 0
+
+        level = '高度集中' if hhi > 0.5 else ('适度集中' if hhi > 0.2 else '分散')
+
+        return {
+            'sectors': sector_weights,
+            'hhi': round(hhi, 4),
+            'top_sector': top_sector,
+            'top_sector_pct': round(top_pct, 1),
+            'level': level,
+        }
+    except Exception as e:
+        return {'error': str(e), 'hhi': 1.0}
+
+
+def _calc_diversification_score(avg_corr: float, num_stocks: int, sector_hhi: float) -> int:
+    """
+    分散化评分 0-100
+    - 低相关性 → 高分
+    - 多股票 → 高分 (边际递减)
+    - 行业分散 → 高分
+    """
+    score = 50
+    # 相关性得分
+    score += (1 - avg_corr) * 30
+    # 股票数量得分
+    score += min(num_stocks * 5, 15)
+    # 行业分散得分
+    score += (1 - sector_hhi) * 15
+    return max(0, min(100, int(score)))
+
+
+def portfolio_risk_text(codes: list, weights: list = None) -> str:
+    """生成组合风险文本摘要（用于AI prompt注入）"""
+    report = portfolio_risk_report(codes, weights)
+    if 'error' in report:
+        return f"[组合风险] {report['error']}"
+
+    lines = [
+        f"## 组合风险摘要 ({len(report['codes'])}只股票)",
+        f"- 分散化评分: {report['diversification_score']}/100",
+        f"- 平均相关性: {report['correlation']['avg_absolute_correlation']}",
+        f"- 行业集中度: {report['sector_concentration'].get('level', '未知')}",
+        f"- 年化波动率: {report['portfolio_stats']['annual_volatility_pct']}%",
+        f"- VaR(95%): {report['portfolio_stats']['var_95_pct']}%",
+        f"- 最大回撤: {report['portfolio_stats']['max_drawdown_pct']}%",
+        f"- 夏普比率: {report['portfolio_stats']['sharpe_ratio']}",
+    ]
+    return '\n'.join(lines)# ═══════════════════════════════════════════════════════════════
 # 便捷函数: 快速获取股票风险摘要
 # ═══════════════════════════════════════════════════════════════
 

@@ -267,11 +267,23 @@ export default function Watchlist() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Title level={2} style={{ margin: 0 }}>自选股管理</Title>
-        {selectedCodes.length >= 2 && (
-          <Button type="primary" style={{ backgroundColor: '#722ed1', borderColor: '#722ed1' }} onClick={handleOpenMulti}>
-            多选一 AI分析
+        <Space>
+        {selectedCodes.length > 0 && (
+          <Button size="small" onClick={() => setSelectedCodes(items.map(i => i.code))}>
+            全选
           </Button>
         )}
+        {selectedCodes.length > 0 && (
+          <Button size="small" onClick={() => setSelectedCodes([])}>
+            取消全选
+          </Button>
+        )}
+        {selectedCodes.length >= 2 && (
+          <Button type="primary" style={{ backgroundColor: '#722ed1', borderColor: '#722ed1' }} onClick={handleOpenMulti}>
+            多选一 AI分析 ({selectedCodes.length})
+          </Button>
+        )}
+      </Space>
       </div>
 
       {/* Store Error */}

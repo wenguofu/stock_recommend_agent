@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Card, Table, Button, InputNumber, Space, Typography, Spin, Tag, Statistic } from 'antd';
+import { Card, Table, Button, InputNumber, Space, Typography, Spin, Tag, Statistic, Modal, Form, Input, DatePicker, message } from 'antd';
 import { PlusOutlined, DeleteOutlined, CalculatorOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 const API = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:35000';
@@ -68,19 +69,36 @@ export default function Midline() {
   const [calcResult, setCalcResult] = useState<any>(null);
   const [calcLoading, setCalcLoading] = useState(false);
 
+  // ═══ 仓位计算器 ═══
   const handleCalc = async () => {
+    if (!calcInput.entry_price || !calcInput.stop_loss_price) {
+      message.warning('请填写入场价和止损价');
+      return;
+    }
     setCalcLoading(true);
-    const res = await fetch(`${API}/api/midline/position-calc`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(calcInput),
-    });
-    const data = await res.json();
-    setCalcResult(data);
+    try {
+      const res = await fetch(`${API}/api/midline/position-calc`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(calcInput),
+      });
+      const data = await res.json();
+      if (data.error) {
+        message.error(data.error);
+      } else {
+        setCalcResult(data);
+      }
+    } catch {
+      message.error('计算失败，请检查网络连接');
+    }
     setCalcLoading(false);
   };
 
   // ═══ 交易日志 ═══
+  const [journalModalOpen, setJournalModalOpen] = useState(false);
+  const [journalForm] = Form.useForm();
+  const [journalSubmitting, setJournalSubmitting] = useState(false);
+
   const { data: journalData, isLoading: journalLoading } = useQuery({
     queryKey: ['midline-journal'],
     queryFn: () => fetch(`${API}/api/midline/journal`).then(r => r.json()),
@@ -97,25 +115,42 @@ export default function Midline() {
   };
 
   const handleAddJournal = () => {
-    const code = prompt('股票代码');
-    const name = prompt('股票名称');
-    const entryDate = prompt('入场日期 (YYYY-MM-DD)');
-    const entryPrice = prompt('入场价格');
-    const shares = prompt('股数');
-    const stopLoss = prompt('止损价');
-    const reason = prompt('入场理由');
-    if (!code || !entryPrice) return;
-    fetch(`${API}/api/midline/journal`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        code, name, entry_date: entryDate,
-        entry_price: parseFloat(entryPrice),
-        shares: parseInt(shares || '100'),
-        stop_loss: parseFloat(stopLoss || '0'),
-        reason_entry: reason,
-      }),
-    }).then(() => queryClient.invalidateQueries({ queryKey: ['midline-journal'] }));
+    journalForm.resetFields();
+    journalForm.setFieldsValue({ shares: 100, entry_date: dayjs() });
+    setJournalModalOpen(true);
+  };
+
+  const handleJournalSubmit = async () => {
+    try {
+      const values = await journalForm.validateFields();
+      setJournalSubmitting(true);
+      const body = {
+        code: values.code,
+        name: values.name,
+        entry_date: values.entry_date.format('YYYY-MM-DD'),
+        entry_price: values.entry_price,
+        shares: values.shares,
+        stop_loss: values.stop_loss || 0,
+        reason_entry: values.reason_entry || '',
+      };
+      const res = await fetch(`${API}/api/midline/journal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.error) {
+        message.error(data.error);
+      } else {
+        message.success('交易记录已添加');
+        setJournalModalOpen(false);
+        queryClient.invalidateQueries({ queryKey: ['midline-journal'] });
+        queryClient.invalidateQueries({ queryKey: ['midline-journal-stats'] });
+      }
+    } catch {
+      // form validation error — handled by antd
+    }
+    setJournalSubmitting(false);
   };
 
   const journals: JournalItem[] = journalData?.data || [];
@@ -352,6 +387,45 @@ export default function Midline() {
           />
         )}
       </Card>
+
+      {/* ═══════════ 添加交易日志 Modal ═══════════ */}
+      <Modal
+        title="记录交易"
+        open={journalModalOpen}
+        onOk={handleJournalSubmit}
+        onCancel={() => setJournalModalOpen(false)}
+        confirmLoading={journalSubmitting}
+        okText="提交"
+        cancelText="取消"
+      >
+        <Form form={journalForm} layout="vertical" style={{ marginTop: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Form.Item name="code" label="股票代码" rules={[{ required: true, message: '请输入' }]}>
+              <Input placeholder="000001" maxLength={6} />
+            </Form.Item>
+            <Form.Item name="name" label="股票名称">
+              <Input placeholder="平安银行" />
+            </Form.Item>
+          </div>
+          <Form.Item name="entry_date" label="入场日期" rules={[{ required: true }]}>
+            <DatePicker style={{ width: '100%' }} />
+          </Form.Item>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <Form.Item name="entry_price" label="入场价格" rules={[{ required: true, message: '请输入' }]}>
+              <InputNumber style={{ width: '100%' }} step={0.01} min={0.01} />
+            </Form.Item>
+            <Form.Item name="shares" label="股数" rules={[{ required: true, message: '请输入' }]}>
+              <InputNumber style={{ width: '100%' }} min={100} step={100} />
+            </Form.Item>
+            <Form.Item name="stop_loss" label="止损价">
+              <InputNumber style={{ width: '100%' }} step={0.01} min={0} />
+            </Form.Item>
+          </div>
+          <Form.Item name="reason_entry" label="入场理由">
+            <Input.TextArea rows={2} placeholder="简要记录入场原因" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </Space>
   );
 }

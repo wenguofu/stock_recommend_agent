@@ -1,4 +1,4 @@
-import { Card, Tag, Typography, Row, Col, Divider } from 'antd';
+import { Card, Tag, Typography, Row, Col, Divider, Alert } from 'antd';
 import { WarningOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;
@@ -32,7 +32,13 @@ const GRADE_COLORS: Record<string, string> = {
 };
 
 export default function RiskPanel({ riskData }: Props) {
-  if (!riskData?.risk_grade || riskData.risk_grade === 'data_insufficient') return null;
+  if (!riskData?.risk_grade || riskData.risk_grade === 'data_insufficient') {
+    return (
+      <Card size="small" title="风险指标">
+        <Alert message="风险数据不足" description="该股票历史数据不足60个交易日，无法计算风险指标" type="info" showIcon />
+      </Card>
+    );
+  }
 
   const gradeColor = GRADE_COLORS[riskData.risk_grade] || 'red';
   const sharpeVal = riskData.sharpe?.sharpe_ratio ?? 0;

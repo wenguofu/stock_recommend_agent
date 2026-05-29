@@ -1160,8 +1160,12 @@ def get_fundamental_data(code):
                     # 如果数值很大（>1000000），单位是"元"，需要除以100000000得到亿元
                     # 如果数值较小（<=1000000），单位是"万元"，需要除以10000得到亿元
                     if d.get('f183') is not None:
-                        val = d['f183']
-                        result['revenue'] = val / 100000000 if abs(val) > 1000000 else val / 10000  # 元或万元转亿元
+                        try:
+                            val = float(d['f183']) if not isinstance(d['f183'], (int, float)) else d['f183']
+                        except (ValueError, TypeError):
+                            val = None
+                        if val is not None:
+                            result['revenue'] = val / 100000000 if abs(val) > 1000000 else val / 10000  # 元或万元转亿元
                     if d.get('f184') is not None:
                         result['revenue_growth'] = d['f184']
                     
@@ -1170,15 +1174,17 @@ def get_fundamental_data(code):
                     # 所以：f185是利润增长，f186是毛利率
                     if d.get('f185') is not None:
                         val = d['f185']
-                        # f185是利润增长（百分比）
-                        if 0 <= abs(val) <= 200:
-                            result['profit_growth'] = val
+                        if isinstance(val, (int, float)):
+                            # f185是利润增长（百分比）
+                            if 0 <= abs(val) <= 200:
+                                result['profit_growth'] = val
                     
                     # f186是毛利率
                     if d.get('f186') is not None:
                         val = d['f186']
-                        if 0 <= abs(val) <= 100:
-                            result['gross_margin'] = val  # 毛利率
+                        if isinstance(val, (int, float)):
+                            if 0 <= abs(val) <= 100:
+                                result['gross_margin'] = val  # 毛利率
                     
                     # 净利润：暂时通过营业收入和净利率计算
                     # 净利率 = 净利润 / 营业收入
@@ -1189,17 +1195,19 @@ def get_fundamental_data(code):
                     # 净利率和负债率：f187是净利率（百分比），f188是负债率（百分比）
                     if d.get('f187') is not None:
                         val = d['f187']
-                        if 0 <= abs(val) <= 100:
-                            result['net_margin'] = val  # 净利率（百分比）
-                            # 通过营业收入和净利率计算净利润
-                            if result.get('revenue') is not None:
-                                result['net_profit'] = result['revenue'] * val / 100
+                        if isinstance(val, (int, float)):
+                            if 0 <= abs(val) <= 100:
+                                result['net_margin'] = val  # 净利率（百分比）
+                                # 通过营业收入和净利率计算净利润
+                                if result.get('revenue') is not None:
+                                    result['net_profit'] = result['revenue'] * val / 100
                     
                     # f188是负债率（百分比）
                     if d.get('f188') is not None:
                         val = d['f188']
-                        if 0 <= abs(val) <= 100:
-                            result['debt_ratio'] = val  # 负债率
+                        if isinstance(val, (int, float)):
+                            if 0 <= abs(val) <= 100:
+                                result['debt_ratio'] = val  # 负债率
                     
                     # 总资产和净资产：需要通过其他字段查找，或者暂时不设置
                     # 净资产可以通过BPS和总股本计算：净资产 = BPS * 总股本
@@ -1210,7 +1218,10 @@ def get_fundamental_data(code):
                     if d.get('f190') is not None and isinstance(d['f190'], (int, float)):
                         result['retained_earnings_per_share'] = d['f190']
                     if d.get('f189') is not None:
-                        result['shareholders_num'] = int(d['f189'])
+                        try:
+                            result['shareholders_num'] = int(d['f189'])
+                        except (ValueError, TypeError):
+                            pass
                     
                     if any(v is not None for k, v in result.items() if k != 'code'):
                         print(f"[API] 成功获取基本面数据")

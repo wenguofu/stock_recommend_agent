@@ -445,17 +445,24 @@ def fuse_signals(code: str, db=None, weights: dict = None) -> dict:
 
         combined_score = round(combined_score, 2)
 
-        # 置信度评估
+        # 置信度评估 (修复: 平均分≈50且低方差 不应产生高置信度)
         signal_scores = [s['score'] for s in signals.values()]
         score_std = 0
+        avg_score = 0
         if len(signal_scores) > 1:
             import numpy as np
             score_std = float(np.std(signal_scores))
+            avg_score = float(np.mean(signal_scores))
 
-        if score_std < 10:
-            confidence = 'high'      # 各信号一致
-        elif score_std < 20:
-            confidence = 'medium'    # 有分歧
+        # 高置信度 = 偏离中性 + 信号一致, 低置信度 = 均值附近 (无论多一致)
+        if avg_score >= 65 and score_std < 10:
+            confidence = 'high'
+        elif avg_score >= 55 and score_std < 15:
+            confidence = 'medium'
+        elif avg_score <= 35 and score_std < 10:
+            confidence = 'high'
+        elif avg_score <= 45 and score_std < 15:
+            confidence = 'medium'
         else:
             confidence = 'low'       # 分歧较大
 
