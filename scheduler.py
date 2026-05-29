@@ -252,6 +252,19 @@ def task_eod_prefetch():
         return f"❌ 收盘刷新失败: {e}"
 
 
+def task_evaluate_tracks():
+    """推荐跟踪自动评估 — 每日收盘后评估到期的推荐记录"""
+    try:
+        from recommendation_tracker import evaluate_tracks
+        result = evaluate_tracks()
+        checked = result.get('checked', 0)
+        if checked > 0:
+            return f"📊 推荐跟踪评估: {checked}条记录已评估"
+        return None
+    except Exception as e:
+        return f"❌ 推荐跟踪评估失败: {e}"
+
+
 def task_watchlist_refresh():
     """自选股数据刷新"""
     script = os.path.join(PROJECT_ROOT, 'scripts', 'refresh_watchlist.py')
@@ -266,6 +279,22 @@ def task_watchlist_refresh():
         return "⏰ 自选股刷新超时"
     except Exception as e:
         return f"❌ 自选股刷新失败: {e}"
+
+
+def task_daily_pipeline():
+    """Post-close AI pipeline — runs at 15:05 on trading days"""
+    if not is_market_close_period():
+        return None
+    from pipeline.daily_pipeline import run_daily_pipeline
+    return run_daily_pipeline()
+
+
+def task_evaluate_recommendations():
+    """Evaluate matured recommendations — daily post-close"""
+    if not is_market_close_period():
+        return None
+    from recommendation_tracker import evaluate_tracks
+    return evaluate_tracks()
 
 
 # ═══════════════════════════════════════════
@@ -376,6 +405,40 @@ TASKS = [
         'func': task_watchlist_refresh,
         'type': 'cron',
         'cron': '*/30 9-15 * * 1-5',
+        'last_date': '',
+        'last_run': 0,
+        'run_count': 0,
+        'last_output': '',
+        'last_error': '',
+    },
+    {
+        'name': '推荐跟踪自动评估',
+        'func': task_evaluate_tracks,
+        'type': 'cron',
+        'cron': '30 16 * * 1-5',  # 收盘后16:30评估
+        'last_date': '',
+        'last_run': 0,
+        'run_count': 0,
+        'last_output': '',
+        'last_error': '',
+    },
+    # ── AI 收盘后任务 ──
+    {
+        'name': 'AI Daily Pipeline',
+        'cron': '5 15 * * 1-5',  # 15:05 on weekdays
+        'func': task_daily_pipeline,
+        'type': 'cron',
+        'last_date': '',
+        'last_run': 0,
+        'run_count': 0,
+        'last_output': '',
+        'last_error': '',
+    },
+    {
+        'name': 'Evaluate Recommendations',
+        'cron': '10 15 * * 1-5',  # 15:10 on weekdays
+        'func': task_evaluate_recommendations,
+        'type': 'cron',
         'last_date': '',
         'last_run': 0,
         'run_count': 0,
