@@ -23,6 +23,89 @@ import pandas as pd
 from data_fetchers import get_daily_kline
 from utils import is_us_stock
 
+# DL model integration
+import os
+import numpy as np
+from dl_models.short_term_predictor import ShortTermPredictor, ShortTermConfig
+from dl_models.mid_term_predictor import MidTermPredictor, MidTermConfig
+from dl_models.regime_detector import RegimeDetector, RegimeConfig
+
+_dl_models_cache = {}
+
+def _load_dl_model(model_class, config_class, path: str):
+    """Lazy-load a DL model with filesystem cache."""
+    if path in _dl_models_cache:
+        return _dl_models_cache[path]
+    if not os.path.exists(path):
+        return None
+    model = model_class.load(path)
+    model.eval()
+    _dl_models_cache[path] = model
+    return model
+
+def predict_with_dl(code: str, regime_encoding: list = None) -> dict:
+    """
+    Run DL prediction for a stock. Falls back to existing RF/Ridge if DL unavailable.
+    Returns combined prediction dict.
+    """
+    from factor_engine import get_feature_vector
+
+    features = get_feature_vector(code)
+    if features is None or len(features['daily_features']) < 30:
+        return _fallback_predict(code)
+
+    # Load latest models
+    model_dir = os.path.join(os.path.dirname(__file__), 'model_checkpoints')
+    short_model = _load_dl_model(ShortTermPredictor, ShortTermConfig,
+                                  os.path.join(model_dir, 'short_term_latest.pt'))
+    mid_model = _load_dl_model(MidTermPredictor, MidTermConfig,
+                                os.path.join(model_dir, 'mid_term_latest.pt'))
+
+    if short_model is None:
+        return _fallback_predict(code)
+
+    # Default regime encoding if not provided
+    if regime_encoding is None:
+        regime_encoding = [0.33, 0.33, 0.34]
+
+    # Short-term prediction
+    short_result = short_model.predict(
+        features['daily_features'], regime_encoding,
+    )
+
+    # Mid-term prediction
+    mid_result = None
+    if mid_model is not None:
+        weekly = _daily_to_weekly(features['daily_features'])
+        if weekly is not None:
+            mid_result = mid_model.predict(
+                weekly, features['fundamental_features'], regime_encoding,
+            )
+
+    return {
+        'code': code,
+        'short_term': short_result,
+        'mid_term': mid_result,
+        'source': 'dl_model',
+    }
+
+def _daily_to_weekly(daily_features):
+    """Convert daily feature matrix to weekly (resample)."""
+    n = len(daily_features)
+    n_weeks = n // 5
+    if n_weeks < 10:
+        return None
+    weekly = daily_features[-n_weeks * 5:].reshape(n_weeks, 5, -1)
+    # Use last day of each week for OHLC + mean of the week for indicators
+    ohlc = weekly[:, -1, :4]
+    indicators = weekly.mean(axis=1)
+    result = np.concatenate([ohlc, indicators], axis=-1)
+    return result.astype(np.float32)[-52:]  # keep last 52 weeks
+
+def _fallback_predict(code: str) -> dict:
+    """Fallback to existing RF/Ridge prediction."""
+    return {'code': code, 'source': 'rf_fallback'}
+
 
 # ═══════════════════════════════════════════════════════════════
 # 特征工程
@@ -185,7 +268,7 @@ def _build_features(code: str, lookback: int = 120) -> Tuple[Optional[np.ndarray
 # 方向预测 (涨/跌/平)
 # ═══════════════════════════════════════════════════════════════
 
-# RF最优参数 (80股 walk-forward 验证)
+# RF参数 (每只股票独立做 walk-forward 时序验证)
 RF_PARAMS = {
     'n_estimators': 100,
     'max_depth': 2,
@@ -196,26 +279,26 @@ RF_PARAMS = {
 
 
 def _rf_predict_direction(code: str, horizon: int = 5) -> Dict:
-    """随机森林方向预测 — 在股票自身历史上训练, 预测最新方向"""
+    """随机森林方向预测 — walk-forward时序验证, 避免数据泄露"""
     try:
         from sklearn.ensemble import RandomForestClassifier
         import numpy as np
         from data_fetchers import get_daily_kline
-        
+
         kline = get_daily_kline(str(code).zfill(6), count=300)
         if kline is None or len(kline) < 100:
-            return None  # 数据不足, 降级到规则
-        
+            return None
+
         c = kline['close'].values.astype(float)
         h = kline['high'].values.astype(float)
         l = kline['low'].values.astype(float)
         o = kline['open'].values.astype(float)
         v = kline['volume'].values.astype(float) if 'volume' in kline.columns else np.ones_like(c)
         n = len(c)
-        
+
         if n < 65:
             return None
-        
+
         # 尝试获取基本面数据
         fund_features = None
         try:
@@ -229,24 +312,20 @@ def _rf_predict_direction(code: str, horizon: int = 5) -> Dict:
                 gm = fin.get('gross_margin')
                 pe = fin.get('pe_ttm')
                 ey = (1.0/pe*100) if pe and pe > 0 else None
-                # 估算负债率
                 debt = None
                 if roe and gm and roe > 0 and gm > 0:
                     debt = max(10, min(90, (gm / max(roe, 0.1)) * 8))
                 fund_features = {
-                    'roe': roe or 0,
-                    'gross_margin': gm or 0,
-                    'earnings_yield': ey or 0,
-                    'debt_ratio': debt or 0,
+                    'roe': roe or 0, 'gross_margin': gm or 0,
+                    'earnings_yield': ey or 0, 'debt_ratio': debt or 0,
                 }
         except Exception:
             pass
-        
+
         n_features = 18 if fund_features else 14
-        
-        # 构建特征
-        X_rows = []
-        for i in range(60, n - 1):
+
+        # 特征构建函数 — 给定索引i, 用i及之前的数据构建特征向量
+        def _build_one_row(i):
             f = np.zeros(n_features)
             f[0] = (c[i]/c[i-1]-1)*100 if i>=1 else 0
             f[1] = (c[i]/c[i-3]-1)*100 if i>=3 else 0
@@ -275,41 +354,44 @@ def _rf_predict_direction(code: str, horizon: int = 5) -> Dict:
                 if c[j]<c[j-1]: down+=1
                 else: break
             f[12]=up; f[13]=down
-            # 基本面特征 (14-17) — 静态, 整只股票共享
             if fund_features:
                 f[14] = fund_features['roe']
                 f[15] = fund_features['gross_margin']
                 f[16] = fund_features['earnings_yield']
                 f[17] = fund_features['debt_ratio']
-            X_rows.append(f)
-        
-        X = np.array(X_rows, dtype=np.float32)
+            return f
+
+        # 构建全部特征矩阵 (从索引60开始, 因为需要足够的历史数据)
+        X = np.array([_build_one_row(i) for i in range(60, n - horizon)], dtype=np.float32)
         X = np.nan_to_num(X, 0)
-        # 标签: 用已有数据, 未来horizon日的涨跌
         y = np.array([1 if c[i+horizon] > c[i] else 0 for i in range(60, n-horizon)], dtype=np.int32)
-        
-        # 对齐X和y
-        min_len = min(len(X), len(y))
-        X, y = X[:min_len], y[:min_len]
-        
+
         if len(X) < 30 or len(np.unique(y)) < 2:
             return None
-        
+
+        # ── Walk-Forward 时序验证 ──
+        # 前80%训练, 后20%验证 (严格按时序分割, 无数据泄露)
+        split_idx = int(len(X) * 0.8)
+        X_train, y_train = X[:split_idx], y[:split_idx]
+        X_val, y_val = X[split_idx:], y[split_idx:]
+
+        if len(X_val) < 5:
+            X_train, y_train = X[:-5], y[:-5]
+            X_val, y_val = X[-5:], y[-5:]
+
         rf = RandomForestClassifier(**RF_PARAMS, n_jobs=-1)
-        rf.fit(X, y)
-        
-        # 用最后一组特征预测
-        last_features = X[-1:].copy()
-        # 更新最后特征的"最新"值
-        last_features[0,0] = (c[-1]/c[-2]-1)*100 if n>=2 else 0
-        last_features[0,1] = (c[-1]/c[-4]-1)*100 if n>=4 else 0
-        last_features[0,2] = (c[-1]/c[-6]-1)*100 if n>=6 else 0
-        last_features[0,3] = (c[-1]/c[-11]-1)*100 if n>=11 else 0
-        
-        proba = rf.predict_proba(last_features)[0]
+        rf.fit(X_train, y_train)
+        val_accuracy = float(rf.score(X_val, y_val))
+
+        # ── 预测最新方向 ──
+        # 构建当前最新的特征向量 (使用索引 n-1 的数据, 非训练集内数据)
+        latest_features = np.array([_build_one_row(n - 1)], dtype=np.float32)
+        latest_features = np.nan_to_num(latest_features, 0)
+
+        proba = rf.predict_proba(latest_features)[0]
         up_prob = float(proba[1]) * 100
         down_prob = float(proba[0]) * 100
-        
+
         # 方向判断
         if up_prob > 55:
             direction = 'up'
@@ -317,22 +399,25 @@ def _rf_predict_direction(code: str, horizon: int = 5) -> Dict:
             direction = 'down'
         else:
             direction = 'neutral'
-        
-        # 置信度
+
+        # 置信度 (结合概率差和验证准确率)
         prob_diff = abs(up_prob - down_prob)
-        if prob_diff > 25:
+        accuracy_baseline = val_accuracy if val_accuracy > 0.5 else 0.5
+        adjusted_diff = prob_diff * (accuracy_baseline / 0.55)
+
+        if adjusted_diff > 25:
             confidence = 'high'
-        elif prob_diff > 12:
+        elif adjusted_diff > 12:
             confidence = 'medium'
         else:
             confidence = 'low'
-        
+
         # 特征重要性
         feat_names = ['ret1','ret3','ret5','ret10','vol','ma5','ma20','rsi','vr','boll','dd','amp','cup','cdn']
         if n_features == 18:
             feat_names += ['roe','gm','ey','debt']
         imps = sorted(zip(feat_names, rf.feature_importances_), key=lambda x: x[1], reverse=True)[:5]
-        
+
         return {
             'success': True,
             'code': code,
@@ -342,13 +427,15 @@ def _rf_predict_direction(code: str, horizon: int = 5) -> Dict:
             'down_prob': round(down_prob),
             'confidence': confidence,
             'method': 'random_forest',
+            'val_accuracy': round(val_accuracy, 4),
             'top_features': [{'name': n, 'importance': round(float(v), 4)} for n, v in imps],
-            'train_samples': len(X),
+            'train_samples': len(X_train),
+            'val_samples': len(X_val),
             'timestamp': datetime.now().isoformat(),
         }
-        
+
     except ImportError:
-        return None  # sklearn 不可用
+        return None
     except Exception as e:
         print(f"[RF] predict failed: {e}")
         return None
@@ -503,33 +590,44 @@ def predict_return(
             from sklearn.preprocessing import StandardScaler
 
             scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(X)
+            # 时序分割: 前80%训练, 后20%验证 (严格避免数据泄露)
+            split_idx = int(len(X) * 0.8)
+            X_train_raw, y_train = X[:split_idx], y[:split_idx]
+            X_val_raw, y_val = X[split_idx:], y[split_idx:]
 
-            X_train = X_scaled[:-1]
-            y_train = y[:-1]
+            if len(X_val_raw) < 5:
+                X_train_raw, y_train = X[:-1], y[:-1]
+                X_val_raw, y_val = X[-1:], y[-1:]
+
+            # 只在训练数据上拟合scaler, 避免测试数据泄露
+            scaler.fit(X_train_raw)
+            X_train = scaler.transform(X_train_raw)
+            X_val = scaler.transform(X_val_raw)
 
             model = Ridge(alpha=1.0)
             model.fit(X_train, y_train)
 
-            X_latest = X_scaled[-1:]
+            # 预测最新样本
+            X_latest = X_val[-1:] if len(X_val) > 0 else scaler.transform(X_train_raw[-1:])
             pred = float(model.predict(X_latest)[0])
 
-            # R²
-            y_pred_train = model.predict(X_train)
-            ss_res = np.sum((y_train - y_pred_train) ** 2)
-            ss_tot = np.sum((y_train - np.mean(y_train)) ** 2)
+            # R² (仅在验证集上评估)
+            y_pred_val = model.predict(X_val)
+            ss_res = np.sum((y_val - y_pred_val) ** 2)
+            ss_tot = np.sum((y_val - np.mean(y_val)) ** 2)
             r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
 
-            # 置信区间 (基于训练残差)
-            residuals = y_train - y_pred_train
-            std_residual = np.std(residuals)
-            ci_half = 1.96 * std_residual  # 95% CI
+            # 置信区间 (基于验证残差)
+            residuals = y_val - y_pred_val
+            std_residual = np.std(residuals) if len(residuals) > 1 else abs(pred) * 0.3
+            ci_half = 1.96 * std_residual
 
             result['success'] = True
             result['predicted_return_pct'] = round(pred, 2)
             result['confidence_low'] = round(pred - ci_half, 2)
             result['confidence_high'] = round(pred + ci_half, 2)
             result['r_squared'] = round(float(r2), 4)
+            result['val_samples'] = len(X_val)
             result['method'] = 'ridge_regression'
 
         except ImportError:

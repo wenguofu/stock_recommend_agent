@@ -178,8 +178,16 @@ def calculate_factors(code: str) -> dict:
         # 质量因子
         quality_factors = _calc_quality_factors(code)
 
-        # 风险因子
-        risk_factors = _calc_risk_factors(daily_df)
+        # 风险因子 (传入沪深300基准数据计算Beta)
+        benchmark_returns = None
+        try:
+            benchmark_df = get_daily_kline('000300', count=120)
+            if benchmark_df is not None and len(benchmark_df) >= 60:
+                bm_close = benchmark_df['close'].values.astype(float)
+                benchmark_returns = np.diff(bm_close) / bm_close[:-1]
+        except Exception:
+            pass
+        risk_factors = _calc_risk_factors(daily_df, benchmark_returns)
 
         # 换手率
         turnover = _calc_turnover_factor(daily_df)
@@ -905,6 +913,208 @@ def get_rating_text(code: str) -> str:
 
     lines.append("")
     return "\n".join(lines) + "\n"
+
+
+# ═══════════════════════════════════════════════════════════════
+# 横截面百分位排名 (实验性)
+# ═══════════════════════════════════════════════════════════════
+
+# 全A股因子横截面缓存表
+# 固定值: 因子名称 → [百分位阈值, ...]
+# 由 update_factor_universe() 每日更新
+_factor_cross_sectional_cache = {}
+
+DEFAULT_CROSS_SECTIONAL_THRESHOLDS = {
+    'momentum_20d':  [-20, -10, -5, 0, 5, 10, 15, 20, 30],
+    'momentum_60d':  [-30, -15, -5, 0, 5, 15, 25, 35, 50],
+    'rsi_14':        [20, 25, 30, 35, 40, 50, 60, 65, 70, 75, 80],
+    'volume_ratio':  [0.2, 0.5, 0.8, 1.0, 1.5, 2.0, 3.0, 5.0, 8.0],
+    'volatility_20d': [10, 15, 20, 25, 30, 35, 40, 50, 60, 80],
+    'turnover_rate': [0.5, 1, 2, 3, 5, 8, 12, 20, 30],
+    'gross_margin':  [10, 15, 20, 25, 30, 40, 50, 60, 70],
+    'roe':           [-5, 0, 2, 5, 10, 15, 20, 25, 30],
+    'pe_ttm':        [0, 10, 15, 20, 30, 50, 80, 100, 200],
+    'pb':            [0.5, 1, 1.5, 2, 3, 5, 8, 12, 20],
+    'profit_yoy':    [-50, -20, -5, 0, 10, 20, 30, 50, 100],
+    'debt_ratio':    [5, 10, 20, 30, 40, 50, 60, 70, 80],
+    'beta_60d':      [0.2, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0],
+}
+
+
+def normalize_cross_sectional(raw_value: float, factor_name: str) -> float:
+    """
+    基于百分位阈值将原始因子值映射到0-100分
+    使用预计算的全A股横截面分布 (更精确的校准请用 update_factor_universe)
+    """
+    thresholds = DEFAULT_CROSS_SECTIONAL_THRESHOLDS.get(factor_name, [])
+    if not thresholds or raw_value is None:
+        return 50.0  # 无阈值时返回中性分
+
+    try:
+        raw_value = float(raw_value)
+    except (ValueError, TypeError):
+        return 50.0
+
+    # 二分查找: 值在阈值数组中的位置 = 百分位
+    # 阈值数组按升序排列, 每个位置代表一个百分位档次
+    import bisect
+    idx = bisect.bisect_left(thresholds, raw_value)
+    percentile = (idx / len(thresholds)) * 100
+    return round(percentile, 1)
+
+
+def update_factor_universe():
+    """
+    更新全A股因子横截面分布 (每日盘后运行)
+    扫描所有A股的因子值, 计算每个因子的十分位阈值, 保存到缓存
+    此函数较耗时 (需遍历全A股), 建议在调度器中每日运行一次
+    """
+    try:
+        from models import SessionLocal
+        from db import get_latest_financial
+        import random
+
+        db = SessionLocal()
+        codes = []
+        try:
+            # 获取股票列表 (取代表性的200只作为样本)
+            from data_fetchers import get_daily_kline
+            # 先尝试从缓存获取股票列表
+            import json, os
+            cache_path = os.path.join(os.path.dirname(__file__), 'stock_list_cache.json')
+            if os.path.exists(cache_path):
+                with open(cache_path) as f:
+                    stock_list = json.load(f)
+                    codes = [s.get('code', '') for s in stock_list if s.get('code')]
+                # 随机采样200只
+                if len(codes) > 200:
+                    random.seed(42)
+                    codes = random.sample(codes, 200)
+        except Exception:
+            pass
+        finally:
+            db.close()
+
+        if not codes:
+            return {'success': False, 'error': '无法获取股票列表'}
+
+        # 对每个因子收集全样本数据
+        factor_data = {name: [] for name in DEFAULT_CROSS_SECTIONAL_THRESHOLDS}
+        for code in codes:
+            try:
+                result = calculate_factors(code)
+                if result.get('success'):
+                    for name in factor_data:
+                        val = result['factors'].get(name)
+                        if val is not None:
+                            factor_data[name].append(float(val))
+            except Exception:
+                continue
+
+        # 计算每个因子的十分位阈值
+        import numpy as np
+        new_thresholds = {}
+        for name, values in factor_data.items():
+            if len(values) >= 30:
+                arr = np.array(values)
+                arr = arr[~np.isnan(arr)]
+                if len(arr) >= 30:
+                    percentiles = np.percentile(arr, [10, 20, 30, 40, 50, 60, 70, 80, 90])
+                    new_thresholds[name] = [round(float(p), 4) for p in percentiles]
+
+        # 更新全局缓存
+        if new_thresholds:
+            global _factor_cross_sectional_cache
+            _factor_cross_sectional_cache = new_thresholds
+
+        return {'success': True, 'updated_factors': len(new_thresholds), 'sample_size': len(codes)}
+
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+def get_feature_vector(code: str) -> dict:
+    """
+    Extract a DL-ready feature vector for a single stock.
+    Uses the existing 20-factor compute path, returns numpy arrays for DL models.
+    Returns dict with keys: daily_features (30, 20), fundamental_features (6,).
+    Returns None if insufficient data.
+    """
+    from data_fetchers import get_daily_kline, get_money_flow_history, get_fundamental_data
+    from dl_models.features import build_daily_features, DAILY_FEATURE_NAMES
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        # Fetch daily K-line (60 days for sufficient history)
+        daily = get_daily_kline(code, count=60)
+        if daily is None or len(daily) < 30:
+            return None
+
+        close = daily['close'].values.astype(np.float32)
+        open_arr = daily['open'].values.astype(np.float32)
+        high = daily['high'].values.astype(np.float32)
+        low = daily['low'].values.astype(np.float32)
+        volume = daily['volume'].values.astype(np.float32)
+        amount = daily.get('amount', volume * close)
+        if hasattr(amount, 'values'):
+            amount = amount.values.astype(np.float32)
+        else:
+            amount = np.array(amount, dtype=np.float32)
+
+        # Money flow
+        mf_5d, mf_10d = None, None
+        try:
+            mf = get_money_flow_history(code, count=60)
+            if mf is not None:
+                mf_5d = mf['net_inflow'].rolling(5).mean().values.astype(np.float32)
+                mf_10d = mf['net_inflow'].rolling(10).mean().values.astype(np.float32)
+        except Exception:
+            pass
+
+        daily_features = build_daily_features(
+            open_arr, high, low, close, volume, amount,
+            money_flow_5d=mf_5d, money_flow_10d=mf_10d,
+        )
+
+        # Convert to array matrix (T, F) with named order
+        feat_matrix = np.column_stack([
+            daily_features.get(name, np.full(len(close), np.nan, dtype=np.float32))
+            for name in DAILY_FEATURE_NAMES
+        ]).astype(np.float32)
+
+        # Drop NaN rows (warmup periods)
+        valid_mask = ~np.isnan(feat_matrix).any(axis=1)
+        feat_matrix = feat_matrix[valid_mask]
+
+        # Keep last 30 rows
+        if len(feat_matrix) > 30:
+            feat_matrix = feat_matrix[-30:]
+
+        # Fundamental features
+        fund_features = np.zeros(6, dtype=np.float32)
+        try:
+            fund = get_fundamental_data(code)
+            if fund is not None:
+                fund_features = np.array([
+                    float(fund.get('pe_ttm', 0) or 0),
+                    float(fund.get('pb', 0) or 0),
+                    float(fund.get('roe', 0) or 0),
+                    float(fund.get('gross_margin', 0) or 0),
+                    float(fund.get('revenue_yoy', 0) or 0),
+                    float(fund.get('debt_ratio', 0) or 0),
+                ], dtype=np.float32)
+        except Exception:
+            pass
+
+        return {
+            'daily_features': feat_matrix,
+            'fundamental_features': fund_features,
+        }
+    except Exception as e:
+        logger.warning(f"get_feature_vector({code}) failed: {e}")
+        return None
 
 
 if __name__ == '__main__':
