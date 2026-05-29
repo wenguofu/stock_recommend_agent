@@ -19,12 +19,19 @@ class ShortTermConfig:
     regime_dim: int = 3
     learning_rate: float = 1e-3
 
+    def __post_init__(self):
+        assert (self.hidden_dim * 2) % self.num_heads == 0, (
+            f"hidden_dim*2 ({self.hidden_dim * 2}) must be divisible by "
+            f"num_heads ({self.num_heads})"
+        )
+
 class ShortTermPredictor(nn.Module):
     """BiLSTM + MultiHeadAttention predictor for short-term price direction & return."""
 
-    def __init__(self, config: ShortTermConfig):
+    def __init__(self, config: ShortTermConfig, device: str = 'cpu'):
         super().__init__()
         self.config = config
+        self.device = device
         self.lstm = nn.LSTM(
             input_size=config.num_features,
             hidden_size=config.hidden_dim,
@@ -86,14 +93,17 @@ class ShortTermPredictor(nn.Module):
         Single-sample prediction.
         features: (T, F) numpy float32 array
         regime_encoding: [bull_prob, bear_prob, sideways_prob]
+
+        Note: 'key_drivers' in the returned dict will be populated when
+        feature-attribution is implemented. Currently returns an empty list.
         """
         self.eval()
         with torch.no_grad():
-            x = torch.from_numpy(features).unsqueeze(0).float()
-            regime = torch.tensor([regime_encoding], dtype=torch.float)
+            x = torch.from_numpy(features).unsqueeze(0).float().to(self.device)
+            regime = torch.tensor([regime_encoding], dtype=torch.float).to(self.device)
             out = self.forward(x, regime)
 
-        probs = out['direction_probs'][0].numpy()  # [flat, up, down]
+        probs = out['direction_probs'][0].cpu().numpy()  # [flat, up, down]
         mu = float(out['return_mu'][0, 0])
         sigma = float(out['return_sigma'][0, 0])
 
@@ -109,15 +119,16 @@ class ShortTermPredictor(nn.Module):
             'expected_return': round(mu, 4),
             'uncertainty': round(sigma, 4),
             'confidence_interval': [ci_low, ci_high],
-            'key_drivers': ['volume_ratio', 'money_flow_5d', 'momentum_5d'],
+            'key_drivers': [],  # TODO: populate when feature-attribution is implemented
         }
 
     def save(self, path: str):
         torch.save({'model_state': self.state_dict(), 'config': self.config}, path)
 
     @classmethod
-    def load(cls, path: str) -> 'ShortTermPredictor':
-        checkpoint = torch.load(path, map_location='cpu', weights_only=False)
-        model = cls(checkpoint['config'])
+    def load(cls, path: str, device: str = 'cpu') -> 'ShortTermPredictor':
+        torch.serialization.add_safe_globals([ShortTermConfig])
+        checkpoint = torch.load(path, map_location=device, weights_only=True)
+        model = cls(checkpoint['config'], device=device)
         model.load_state_dict(checkpoint['model_state'])
         return model
