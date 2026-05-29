@@ -1,8 +1,7 @@
 """Feature engineering for DL models — daily, weekly, and market-level features."""
 
 import numpy as np
-import pandas as pd
-from typing import Dict, Tuple, Optional
+from typing import Dict, Optional
 
 def compute_returns(close: np.ndarray, periods: list) -> Dict[str, np.ndarray]:
     """Compute returns over multiple periods. Returns dict keyed by 'ret_{p}d'."""
@@ -67,7 +66,7 @@ def compute_volume_ratio(volume: np.ndarray, window: int = 5) -> np.ndarray:
 
 def build_daily_features(
     open_arr: np.ndarray, high_arr: np.ndarray, low_arr: np.ndarray,
-    close_arr: np.ndarray, volume_arr: np.ndarray, amount_arr: np.ndarray,
+    close_arr: np.ndarray, volume_arr: np.ndarray, amount_arr: Optional[np.ndarray] = None,
     turnover_arr: Optional[np.ndarray] = None,
     money_flow_5d: Optional[np.ndarray] = None,
     money_flow_10d: Optional[np.ndarray] = None,
@@ -75,6 +74,7 @@ def build_daily_features(
     """
     Build daily-frequency feature dict for a single stock.
     All input arrays are 1-D numpy float32, aligned by date (oldest->newest).
+    amount_arr is optional (currently not used in feature computation).
     Returns dict of feature_name -> 1-D array.
     """
     features = {}
