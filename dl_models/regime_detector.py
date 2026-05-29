@@ -49,15 +49,11 @@ class RegimeDetector(nn.Module):
             nn.Dropout(config.dropout),
             nn.Linear(config.d_model // 2, config.num_regimes),
         )
-        # Will be set on first forward pass
-        self._proj = None
+        self.input_proj = nn.LazyLinear(config.d_model)
 
     def _project_features(self, x: torch.Tensor) -> torch.Tensor:
         """Project input features to d_model dimension."""
-        B, T, F = x.shape
-        if self._proj is None or self._proj.in_features != F:
-            self._proj = nn.Linear(F, self.config.d_model).to(x.device)
-        return self._proj(x)
+        return self.input_proj(x)
 
     def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None):
         """x: (B, T, F) — returns dict with logits, probs, regime_idx."""
