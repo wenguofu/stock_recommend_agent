@@ -106,3 +106,4 @@ stock_frontend/.vite/
 stock_frontend/.env.local
 stock_frontend/.env.*.local
 
+.superpowers/
