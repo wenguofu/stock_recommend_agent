@@ -101,6 +101,9 @@ def register_routes():
     # 注册推荐跟踪API
     from recommendation_tracker import register_track_routes
     register_track_routes(app)
+    # 注册定量估值API
+    from valuation_routes import register_valuation_routes
+    register_valuation_routes(app)
 
 def init_database():
     """初始化数据库和默认配置"""
