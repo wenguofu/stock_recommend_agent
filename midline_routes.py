@@ -100,8 +100,12 @@ def register_midline_routes(app):
         stop = float(data.get("stop_loss_price", 0))
         target = float(data.get("target_price", 0))
 
-        if entry <= 0 or stop <= 0:
-            return jsonify({"error": "请输入有效价格"}), 400
+        if entry <= 0:
+            return jsonify({'error': '入场价必须大于0'}), 400
+        if stop is not None and stop <= 0:
+            return jsonify({'error': '止损价必须大于0'}), 400
+        if target is not None and target <= 0:
+            return jsonify({'error': '目标价必须大于0'}), 400
 
         risk_per_share = abs(entry - stop)
         max_loss = total * (risk_pct / 100)

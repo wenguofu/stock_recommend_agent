@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Card, Table, Button, InputNumber, Space, Typography, Spin, Tag, Statistic, Modal, Form, Input, DatePicker, message } from 'antd';
+import { Alert, Card, Table, Button, InputNumber, Space, Typography, Spin, Tag, Statistic, Modal, Form, Input, DatePicker, Tooltip, message } from 'antd';
 import { PlusOutlined, DeleteOutlined, CalculatorOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
@@ -17,6 +17,7 @@ interface HealthItem {
   rsi_score: number;
   trend: string;
   suggestion: string;
+  error?: string;
   shares?: number | null;
   cost_price?: number | null;
 }
@@ -52,7 +53,7 @@ export default function Midline() {
   const queryClient = useQueryClient();
 
   // ═══ 自选池健康度 ═══
-  const { data: healthData, isLoading: healthLoading } = useQuery({
+  const { data: healthData, isLoading: healthLoading, isError: healthIsError, error: healthError } = useQuery({
     queryKey: ['midline-health'],
     queryFn: () => fetch(`${API}/api/midline/watchlist-health`).then(r => r.json()),
     refetchInterval: 60000,
@@ -99,19 +100,30 @@ export default function Midline() {
   const [journalForm] = Form.useForm();
   const [journalSubmitting, setJournalSubmitting] = useState(false);
 
-  const { data: journalData, isLoading: journalLoading } = useQuery({
+  const { data: journalData, isLoading: journalLoading, isError: journalIsError } = useQuery({
     queryKey: ['midline-journal'],
     queryFn: () => fetch(`${API}/api/midline/journal`).then(r => r.json()),
   });
 
-  const { data: statsData } = useQuery({
+  const { data: statsData, isError: statsIsError } = useQuery({
     queryKey: ['midline-journal-stats'],
     queryFn: () => fetch(`${API}/api/midline/journal/stats`).then(r => r.json()),
   });
 
   const handleDelete = async (id: number) => {
-    await fetch(`${API}/api/midline/journal/${id}`, { method: 'DELETE' });
-    queryClient.invalidateQueries({ queryKey: ['midline-journal'] });
+    try {
+      const res = await fetch(`${API}/api/midline/journal/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        message.error(data?.error || '删除失败');
+        return;
+      }
+      queryClient.invalidateQueries({ queryKey: ['midline-journal'] });
+      queryClient.invalidateQueries({ queryKey: ['midline-journal-stats'] });
+      message.success('已删除');
+    } catch (e: any) {
+      message.error('网络错误，删除失败');
+    }
   };
 
   const handleAddJournal = () => {
@@ -138,19 +150,29 @@ export default function Midline() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData?.error || `HTTP ${res.status}`);
+      }
       const data = await res.json();
       if (data.error) {
         message.error(data.error);
-      } else {
-        message.success('交易记录已添加');
-        setJournalModalOpen(false);
-        queryClient.invalidateQueries({ queryKey: ['midline-journal'] });
-        queryClient.invalidateQueries({ queryKey: ['midline-journal-stats'] });
+        return;
       }
-    } catch {
-      // form validation error — handled by antd
+      message.success('已添加');
+      journalForm.resetFields();
+      queryClient.invalidateQueries({ queryKey: ['midline-journal'] });
+      queryClient.invalidateQueries({ queryKey: ['midline-journal-stats'] });
+      setJournalModalOpen(false);
+    } catch (e: any) {
+      if (e?.errorFields) {
+        // antd form validation error — handled by form
+        return;
+      }
+      message.error(e?.message || '添加失败，请检查网络');
+    } finally {
+      setJournalSubmitting(false);
     }
-    setJournalSubmitting(false);
   };
 
   const journals: JournalItem[] = journalData?.data || [];
@@ -179,12 +201,21 @@ export default function Midline() {
     },
     {
       title: '评分', dataIndex: 'score', key: 'score', align: 'right',
-      render: (score: number) => (
-        <Text strong style={{
-          fontSize: 18,
-          color: score >= 70 ? '#52c41a' : score >= 40 ? '#faad14' : '#ff4d4f',
-        }}>{score}</Text>
-      ),
+      render: (score: number, record: HealthItem) => {
+        if (record.error) {
+          return (
+            <Tooltip title={record.error}>
+              <Tag color="red">错误</Tag>
+            </Tooltip>
+          );
+        }
+        return (
+          <Text strong style={{
+            fontSize: 18,
+            color: score >= 70 ? '#52c41a' : score >= 40 ? '#faad14' : '#ff4d4f',
+          }}>{score}</Text>
+        );
+      },
       width: 80,
     },
     { title: '均线', dataIndex: 'ma_score', key: 'ma_score', align: 'center', render: (v: number) => `${v}分`, width: 80 },
@@ -236,6 +267,8 @@ export default function Midline() {
       >
         {healthLoading ? (
           <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
+        ) : healthIsError ? (
+          <Alert type="error" message="健康数据加载失败" description={(healthError as any)?.message || '请检查网络连接'} />
         ) : (
           <Table<HealthItem>
             columns={healthColumns}
@@ -338,7 +371,9 @@ export default function Midline() {
 
         {/* 交易统计 */}
         <Card title={<Text strong>📈 交易统计</Text>}>
-          {stats.total_trades > 0 ? (
+          {statsIsError ? (
+            <Alert type="error" message="交易统计加载失败" description="请检查网络连接" />
+          ) : stats.total_trades > 0 ? (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Statistic title="总交易" value={stats.total_trades} />
               <Statistic title="胜率" value={stats.win_rate} suffix="%"
@@ -372,6 +407,8 @@ export default function Midline() {
       >
         {journalLoading ? (
           <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
+        ) : journalIsError ? (
+          <Alert type="error" message="交易日志加载失败" description="请检查网络连接" />
         ) : journals.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 32 }}>
             <Text type="secondary">暂无记录</Text>
