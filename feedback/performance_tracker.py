@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List
 import numpy as np
-from models import SessionLocal
+from models import SessionLocal, TradeJournal
 from recommendation_tracker import RecommendationTrack, _wilson_ci
 
 logger = logging.getLogger(__name__)
@@ -64,6 +64,48 @@ def get_performance_report(days: int = 90) -> Dict:
                 'sharpe': sharpe, 'max_drawdown': max_dd,
                 'ci_95': f"{ci_low}%-{ci_high}%",
             }
+
+        # Also include TradeJournal data as a source
+        try:
+            journal_rows = db.execute(
+                db.query(TradeJournal).filter(
+                    TradeJournal.pnl.isnot(None),
+                    TradeJournal.entry_date >= (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d'),
+                ).statement
+            ).fetchall()
+
+            if journal_rows:
+                journal_returns = []
+                journal_wins = []
+                journal_losses = []
+                for j in journal_rows:
+                    if j.pnl_pct is not None:
+                        journal_returns.append(j.pnl_pct)
+                        if j.pnl_pct > 0:
+                            journal_wins.append(j.pnl_pct)
+                        elif j.pnl_pct < 0:
+                            journal_losses.append(j.pnl_pct)
+
+                if journal_returns:
+                    j_hits = len(journal_wins)
+                    j_total = len(journal_returns)
+                    j_wr = round(j_hits / j_total * 100, 1) if j_total > 0 else 0
+                    j_pf = compute_profit_factor(journal_wins, journal_losses)
+                    j_avg = round(np.mean(journal_returns), 2)
+                    j_ci = _wilson_ci(j_hits, j_total)
+
+                    source_reports['trade_journal'] = {
+                        'total': j_total,
+                        'hits': j_hits,
+                        'win_rate': j_wr,
+                        'profit_factor': j_pf,
+                        'avg_return': j_avg,
+                        'sharpe': 0,
+                        'max_drawdown': round(min(journal_returns), 2) if journal_returns else 0,
+                        'ci_95': f"{j_ci[0]}%-{j_ci[1]}%",
+                    }
+        except Exception:
+            pass  # TradeJournal not loaded or table doesn't exist yet
 
         return {
             'period_days': days,

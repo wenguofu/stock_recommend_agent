@@ -20,6 +20,10 @@ interface HealthItem {
   error?: string;
   shares?: number | null;
   cost_price?: number | null;
+  dl_direction?: string | null;
+  dl_prob_up?: number | null;
+  dl_prob_down?: number | null;
+  dl_short_return?: number | null;
 }
 
 interface JournalItem {
@@ -66,6 +70,8 @@ export default function Midline() {
     entry_price: 0,
     stop_loss_price: 0,
     target_price: 0,
+    code: '',
+    sector: '',
   });
   const [calcResult, setCalcResult] = useState<any>(null);
   const [calcLoading, setCalcLoading] = useState(false);
@@ -218,6 +224,35 @@ export default function Midline() {
       },
       width: 80,
     },
+    {
+      title: 'DL预测',
+      key: 'dl_pred',
+      width: 130,
+      render: (_: any, record: HealthItem) => {
+        if (!record.dl_direction) {
+          return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+        }
+        const dirColor = record.dl_direction === 'up' ? '#cf1322'
+          : record.dl_direction === 'down' ? '#1677ff' : '#999';
+        const dirLabel = record.dl_direction === 'up' ? '↑涨'
+          : record.dl_direction === 'down' ? '↓跌' : '→平';
+        const prob = record.dl_direction === 'up' ? record.dl_prob_up
+          : record.dl_direction === 'down' ? record.dl_prob_down
+          : record.dl_prob_up;
+        return (
+          <Tooltip title={`预期收益: ${(record.dl_short_return || 0).toFixed(2)}%`}>
+            <Space size={4}>
+              <Text strong style={{ color: dirColor, fontSize: 13 }}>{dirLabel}</Text>
+              {prob != null && (
+                <Text style={{ fontSize: 11, color: '#666' }}>
+                  {(prob * 100).toFixed(0)}%
+                </Text>
+              )}
+            </Space>
+          </Tooltip>
+        );
+      },
+    },
     { title: '均线', dataIndex: 'ma_score', key: 'ma_score', align: 'center', render: (v: number) => `${v}分`, width: 80 },
     { title: 'MACD', dataIndex: 'macd_signal', key: 'macd_signal', align: 'center', width: 80 },
     { title: 'RSI', dataIndex: 'rsi_score', key: 'rsi_score', align: 'center', render: (v: number) => `${v}分`, width: 80 },
@@ -330,6 +365,25 @@ export default function Midline() {
                   step={0.01}
                 />
               </div>
+              <div>
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>股票代码(可选)</Text>
+                <Input
+                  style={{ width: '100%' }}
+                  value={calcInput.code}
+                  onChange={e => setCalcInput({ ...calcInput, code: e.target.value })}
+                  placeholder="000001"
+                  maxLength={6}
+                />
+              </div>
+              <div>
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>所属板块(可选)</Text>
+                <Input
+                  style={{ width: '100%' }}
+                  value={calcInput.sector}
+                  onChange={e => setCalcInput({ ...calcInput, sector: e.target.value })}
+                  placeholder="Other"
+                />
+              </div>
             </div>
             <Button type="primary" block onClick={handleCalc} loading={calcLoading} icon={<CalculatorOutlined />}>
               计算仓位
@@ -364,6 +418,23 @@ export default function Midline() {
                     <Text type="secondary" style={{ fontSize: 12 }}>¥{calcResult.risk_per_share}</Text>
                   </div>
                 </Space>
+                {calcResult?.risk_check && !calcResult.risk_check.passed && (
+                  <Alert
+                    type="warning"
+                    message="AI风控提示"
+                    description={
+                      <ul style={{ margin: 0, paddingLeft: 16 }}>
+                        {calcResult.risk_check.violations?.map((v: string, i: number) => (
+                          <li key={i}>{v}</li>
+                        ))}
+                      </ul>
+                    }
+                    style={{ marginTop: 8 }}
+                  />
+                )}
+                {calcResult?.risk_check?.passed && (
+                  <Alert type="success" message="AI风控检查通过" style={{ marginTop: 8 }} />
+                )}
               </div>
             )}
           </Space>

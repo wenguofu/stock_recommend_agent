@@ -38,6 +38,30 @@ def register_midline_routes(app):
             for item in items:
                 try:
                     score = _score_stock(item.code)
+
+                    # Try to get DL prediction
+                    dl_direction = None
+                    dl_prob_up = None
+                    dl_prob_down = None
+                    dl_short_return = None
+                    try:
+                        from factor_engine import get_feature_vector
+                        fv = get_feature_vector(item.code)
+                        if fv and len(fv.get('daily_features', [])) >= 30:
+                            from dl_models.short_term_predictor import ShortTermPredictor
+                            import os
+                            model_path = os.path.join(app.root_path, '..', 'model_checkpoints', 'short_term_latest.pt')
+                            model_path = os.path.normpath(model_path)
+                            if os.path.exists(model_path):
+                                short_model = ShortTermPredictor.load(model_path)
+                                result = short_model.predict(fv['daily_features'], [0.33, 0.33, 0.34])
+                                dl_direction = result.get('direction')
+                                dl_prob_up = result.get('prob_up')
+                                dl_prob_down = result.get('prob_down')
+                                dl_short_return = result.get('expected_return')
+                    except Exception:
+                        pass  # DL not available, leave as None
+
                     results.append({
                         "code": item.code,
                         "name": item.name,
@@ -49,6 +73,10 @@ def register_midline_routes(app):
                         "rsi_score": score["rsi_score"],
                         "trend": score["trend"],
                         "suggestion": score["suggestion"],
+                        "dl_direction": dl_direction,
+                        "dl_prob_up": dl_prob_up,
+                        "dl_prob_down": dl_prob_down,
+                        "dl_short_return": dl_short_return,
                     })
                 except Exception:
                     results.append({
@@ -58,6 +86,10 @@ def register_midline_routes(app):
                         "shares": item.shares,
                         "score": 0,
                         "error": "数据获取失败",
+                        "dl_direction": None,
+                        "dl_prob_up": None,
+                        "dl_prob_down": None,
+                        "dl_short_return": None,
                     })
             results.sort(key=lambda x: x["score"], reverse=True)
             return jsonify({"data": results})
@@ -99,6 +131,9 @@ def register_midline_routes(app):
         entry = float(data.get("entry_price", 0))
         stop = float(data.get("stop_loss_price", 0))
         target = float(data.get("target_price", 0))
+        code = data.get('code', '000001')
+        sector = data.get('sector', 'Other')
+        turnover = data.get('turnover')
 
         if entry <= 0:
             return jsonify({'error': '入场价必须大于0'}), 400
@@ -135,6 +170,28 @@ def register_midline_routes(app):
             result["target_price"] = target
             result["reward_per_share"] = round(reward, 2)
             result["risk_reward_ratio"] = round(risk_rr, 2)
+
+        # Apply AI risk constraints
+        try:
+            from risk_control.hard_constraints import validate_order, ConstraintConfig
+            config = ConstraintConfig()
+            r = validate_order(
+                action='buy',
+                target_code=code,
+                target_sector=sector,
+                order_amount=position_value,
+                portfolio_value=total,
+                current_positions=[],
+                current_daily_pnl_pct=0,
+                avg_daily_turnover=turnover,
+            )
+            result['risk_check'] = {
+                'passed': r.passed,
+                'violations': r.violations,
+                'warnings': r.warnings,
+            }
+        except ImportError:
+            result['risk_check'] = None
 
         return jsonify(result)
 
