@@ -80,3 +80,33 @@
 
 - `npm run build` — Vite 生产构建，输出 dist/
 - Bundle: ~1.76MB (gzipped ~540KB)
+
+## New Components (2026-05-30)
+
+### RegimeIndicator
+Market state indicator showing bull/bear/sideways with color-coded probability bars and confidence tooltip.
+
+### AgentReasoning
+Collapsible panel showing Macro/Technical/Fundamental/Risk agent analysis with stance tags, confidence progress bars, veto flags, and final fusion decision card.
+
+### ValuationPanel
+Embedded in StockDetail "定量估值" tab. Industry growth input + composite score ring + core metrics table.
+
+## Midline Panel Upgrades
+
+- DL prediction column in health table (direction + probability + expected return)
+- AI risk constraint validation in position calculator
+- Inline journal entry form (replaced Modal)
+- Server-side pagination for health and journal tables (20/page, 15/page)
+
+## Server-Side Pagination
+
+All list endpoints now support `?page=N&pageSize=M`:
+
+| Endpoint | Default pageSize |
+|----------|-----------------|
+| `/api/watchlist` | 20 |
+| `/api/midline/watchlist-health` | 20 |
+| `/api/midline/journal` | 15 |
+
+Frontend Table pagination drives re-fetch via `onChange → state → queryKey change`.

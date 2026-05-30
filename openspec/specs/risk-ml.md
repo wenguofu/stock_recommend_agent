@@ -69,3 +69,32 @@ RF_PARAMS = {
 - [ ] RF 训练数据基于单股自身历史(非横截面)，泛化能力受限
 - [ ] sklearn 不可用时降级到规则引擎，静默切换无告警
 - [ ] 预测有中性区间，但UI未明确展示置信度边界
+
+## DL Prediction (dl_models/)
+
+> Added: 2026-05-30 — Replaces shallow RF/Ridge with deep learning models
+
+### Models
+
+| Model | Architecture | Horizon | Input | Output |
+|-------|-------------|---------|-------|--------|
+| RegimeDetector | 2-layer Transformer | 60-day lookback | Market indices + breadth + volume | bull/bear/sideways + confidence |
+| ShortTermPredictor | BiLSTM(2-layer) + MultiHeadAttention | 30-day seq | 20 daily features + regime context | direction(up/down/flat) + expected return(μ,σ) |
+| MidTermPredictor | 4-layer Transformer | 52-week seq | 8 price features + 6 fundamental + regime | direction + expected return(μ,σ) |
+
+### Feature Engineering (dl_models/features.py)
+
+20 daily features: ret_1d, ret_3d, ret_5d, ret_10d, ret_20d, volatility_20d, ma_dev_5d/10d/20d/60d, rsi_14, atr_ratio, volume_ratio, bollinger_pos, amplitude, consecutive_up, consecutive_down, money_flow_5d, money_flow_10d, turnover_rate
+
+### Calibration
+
+- Temperature scaling (optimize single T via NLL)
+- Isotonic regression (per-class, sklearn)
+- ONNX export for all 3 models
+
+### Integration
+
+- `factor_engine.get_feature_vector()` — DL-ready numpy arrays from K-line data
+- `ml_predictor.predict_with_dl()` — DL inference with RF fallback
+- Model checkpoints in `model_checkpoints/` directory
+- Daily retrain via pipeline (walk-forward validation)

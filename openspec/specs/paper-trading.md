@@ -43,3 +43,7 @@ paper_accounts / paper_positions / paper_orders / paper_snapshots / paper_plans 
 - [ ] 不支持空头/融券
 - [ ] 快照定时器硬编码 60分钟默认
 - [ ] 无交易滑点模拟
+
+## Risk Control Integration (2026-05-30)
+
+Every `create_order()` call now runs through `risk_control.hard_constraints.validate_order()` before execution. If any of 7 hard constraints are violated, the order is blocked with a structured error response containing `violations[]` and `warnings[]`.

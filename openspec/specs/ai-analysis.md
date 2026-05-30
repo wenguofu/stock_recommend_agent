@@ -70,3 +70,35 @@
 - [ ] Operator 报告生成逻辑内嵌于路由函数
 - [ ] 无辩论重试机制（网络超时后无法恢复）
 - [ ] Agent prompt 保存在数据库，版本控制困难
+
+## LLM Agent Decision Layer (llm_agents/)
+
+> Added: 2026-05-30 — Multi-agent architecture for trading decisions
+
+### Architecture
+
+4 specialist agents run concurrently, 1 fusion agent runs sequentially:
+
+| Agent | Role | Key Inputs | Output |
+|-------|------|------------|--------|
+| Macro | Senior strategist | Index data, sector heatmap, north-bound flow, regime prediction | stance(bullish/neutral/bearish), confidence 0-100 |
+| Technical | Quant analyst | DL predictions, factor scores, technical patterns | stance, key signals, confidence |
+| Fundamental | Value analyst | PE/PB percentiles, ROE, growth, margins | stance, valuation, quality grade |
+| Risk | Risk manager | VaR, CVaR, max DD, Kelly, liquidity | risk grade, position cap, veto flag |
+| Fusion | Portfolio manager | All 4 specialist outputs | action(buy/sell/hold/watch), position%, stop-loss, take-profit |
+
+### Decision Rules
+
+1. Risk Agent has veto power — cannot buy when risk grade "high"
+2. Buy requires ≥2 agents bullish AND none bearish
+3. Confidence < 40 on any 2 agents → downgrade
+4. Conflicting signals → prefer lower-risk option
+5. Position = Kelly × risk_coefficient × regime_coefficient
+
+### Technical
+
+- Concurrent execution via ThreadPoolExecutor (max_workers=4)
+- Structured JSON output via `response_format: json_object`
+- 1-hour result cache per stock+data_hash
+- Agent prompts in `llm_agents/agent_prompts/`
+- Batch analysis with Semaphore concurrency control (max 5 concurrent)
