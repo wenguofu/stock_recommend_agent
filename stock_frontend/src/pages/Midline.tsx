@@ -102,7 +102,7 @@ export default function Midline() {
   };
 
   // ═══ 交易日志 ═══
-  const [journalModalOpen, setJournalModalOpen] = useState(false);
+  const [journalFormVisible, setJournalFormVisible] = useState(false);
   const [journalForm] = Form.useForm();
   const [journalSubmitting, setJournalSubmitting] = useState(false);
 
@@ -135,7 +135,7 @@ export default function Midline() {
   const handleAddJournal = () => {
     journalForm.resetFields();
     journalForm.setFieldsValue({ shares: 100, entry_date: dayjs() });
-    setJournalModalOpen(true);
+    setJournalFormVisible(true);
   };
 
   const handleJournalSubmit = async () => {
@@ -169,7 +169,7 @@ export default function Midline() {
       journalForm.resetFields();
       queryClient.invalidateQueries({ queryKey: ['midline-journal'] });
       queryClient.invalidateQueries({ queryKey: ['midline-journal-stats'] });
-      setJournalModalOpen(false);
+      setJournalFormVisible(false);
     } catch (e: any) {
       if (e?.errorFields) {
         // antd form validation error — handled by form
@@ -309,9 +309,9 @@ export default function Midline() {
             columns={healthColumns}
             dataSource={healthItems}
             rowKey="code"
-            pagination={false}
+            pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 只` }}
             size="small"
-            scroll={{ x: 800 }}
+            scroll={{ x: 900 }}
           />
         )}
       </Card>
@@ -476,6 +476,55 @@ export default function Midline() {
         title={<Text strong>📝 交易日志</Text>}
         extra={<Button type="primary" icon={<PlusOutlined />} onClick={handleAddJournal}>记录交易</Button>}
       >
+        {/* ═══════════ 内联交易日志表单 ═══════════ */}
+        {journalFormVisible && (
+          <Card
+            title="📝 记录新交易"
+            size="small"
+            extra={
+              <Button type="link" onClick={() => setJournalFormVisible(false)}>
+                收起
+              </Button>
+            }
+            style={{ marginBottom: 16, borderLeft: '3px solid #1677ff' }}
+          >
+            <Form form={journalForm} layout="vertical">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <Form.Item name="code" label="股票代码" rules={[{ required: true, message: '请输入' }]}>
+                  <Input placeholder="000001" maxLength={6} />
+                </Form.Item>
+                <Form.Item name="name" label="股票名称">
+                  <Input placeholder="平安银行" />
+                </Form.Item>
+              </div>
+              <Form.Item name="entry_date" label="入场日期" rules={[{ required: true }]}>
+                <DatePicker style={{ width: '100%' }} />
+              </Form.Item>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                <Form.Item name="entry_price" label="入场价格" rules={[{ required: true, message: '请输入' }]}>
+                  <InputNumber style={{ width: '100%' }} step={0.01} min={0.01} />
+                </Form.Item>
+                <Form.Item name="shares" label="股数" rules={[{ required: true, message: '请输入' }]}>
+                  <InputNumber style={{ width: '100%' }} min={100} step={100} />
+                </Form.Item>
+                <Form.Item name="stop_loss" label="止损价">
+                  <InputNumber style={{ width: '100%' }} step={0.01} min={0} />
+                </Form.Item>
+              </div>
+              <Form.Item name="reason_entry" label="入场理由">
+                <Input.TextArea rows={2} placeholder="简要记录入场原因" />
+              </Form.Item>
+              <Space>
+                <Button type="primary" onClick={handleJournalSubmit} loading={journalSubmitting}>
+                  提交记录
+                </Button>
+                <Button onClick={() => setJournalFormVisible(false)}>
+                  取消
+                </Button>
+              </Space>
+            </Form>
+          </Card>
+        )}
         {journalLoading ? (
           <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
         ) : journalIsError ? (
@@ -489,51 +538,12 @@ export default function Midline() {
             columns={journalColumns}
             dataSource={journals}
             rowKey="id"
-            pagination={false}
+            pagination={{ pageSize: 15, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
             size="small"
             scroll={{ x: 1000 }}
           />
         )}
       </Card>
-
-      {/* ═══════════ 添加交易日志 Modal ═══════════ */}
-      <Modal
-        title="记录交易"
-        open={journalModalOpen}
-        onOk={handleJournalSubmit}
-        onCancel={() => setJournalModalOpen(false)}
-        confirmLoading={journalSubmitting}
-        okText="提交"
-        cancelText="取消"
-      >
-        <Form form={journalForm} layout="vertical" style={{ marginTop: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Form.Item name="code" label="股票代码" rules={[{ required: true, message: '请输入' }]}>
-              <Input placeholder="000001" maxLength={6} />
-            </Form.Item>
-            <Form.Item name="name" label="股票名称">
-              <Input placeholder="平安银行" />
-            </Form.Item>
-          </div>
-          <Form.Item name="entry_date" label="入场日期" rules={[{ required: true }]}>
-            <DatePicker style={{ width: '100%' }} />
-          </Form.Item>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            <Form.Item name="entry_price" label="入场价格" rules={[{ required: true, message: '请输入' }]}>
-              <InputNumber style={{ width: '100%' }} step={0.01} min={0.01} />
-            </Form.Item>
-            <Form.Item name="shares" label="股数" rules={[{ required: true, message: '请输入' }]}>
-              <InputNumber style={{ width: '100%' }} min={100} step={100} />
-            </Form.Item>
-            <Form.Item name="stop_loss" label="止损价">
-              <InputNumber style={{ width: '100%' }} step={0.01} min={0} />
-            </Form.Item>
-          </div>
-          <Form.Item name="reason_entry" label="入场理由">
-            <Input.TextArea rows={2} placeholder="简要记录入场原因" />
-          </Form.Item>
-        </Form>
-      </Modal>
     </Space>
   );
 }

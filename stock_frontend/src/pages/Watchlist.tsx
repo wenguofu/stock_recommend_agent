@@ -354,7 +354,7 @@ export default function Watchlist() {
               dataSource={items}
               columns={columns}
               rowKey={(record) => record.code}
-              pagination={false}
+              pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 只` }}
               size="middle"
             />
           )}
