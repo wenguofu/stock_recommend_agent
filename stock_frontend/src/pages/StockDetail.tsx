@@ -12,6 +12,7 @@ import MLPredictPanel from '../components/MLPredictPanel';
 import StockHeader from '../components/StockHeader';
 import StockAnalysis from '../components/StockAnalysis';
 import StockDebate from '../components/StockDebate';
+import ValuationPanel from '../components/ValuationPanel';
 
 const { Text } = Typography;
 
@@ -449,6 +450,11 @@ export default function StockDetail() {
           )}
         </Space>
       ) : null,
+    },
+    {
+      key: 'valuation',
+      label: '定量估值',
+      children: <ValuationPanel stockCode={codeStr} />,
     },
   ];
 
