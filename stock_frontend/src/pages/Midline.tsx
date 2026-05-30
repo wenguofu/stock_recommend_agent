@@ -55,11 +55,15 @@ interface StatsData {
 
 export default function Midline() {
   const queryClient = useQueryClient();
+  const [healthPage, setHealthPage] = useState(1);
+  const [healthPageSize, setHealthPageSize] = useState(20);
+  const [journalPage, setJournalPage] = useState(1);
+  const [journalPageSize, setJournalPageSize] = useState(15);
 
   // ═══ 自选池健康度 ═══
   const { data: healthData, isLoading: healthLoading, isError: healthIsError, error: healthError } = useQuery({
-    queryKey: ['midline-health'],
-    queryFn: () => fetch(`${API}/api/midline/watchlist-health`).then(r => r.json()),
+    queryKey: ['midline-health', healthPage, healthPageSize],
+    queryFn: () => fetch(`${API}/api/midline/watchlist-health?page=${healthPage}&pageSize=${healthPageSize}`).then(r => r.json()),
     refetchInterval: 60000,
   });
 
@@ -107,8 +111,8 @@ export default function Midline() {
   const [journalSubmitting, setJournalSubmitting] = useState(false);
 
   const { data: journalData, isLoading: journalLoading, isError: journalIsError } = useQuery({
-    queryKey: ['midline-journal'],
-    queryFn: () => fetch(`${API}/api/midline/journal`).then(r => r.json()),
+    queryKey: ['midline-journal', journalPage, journalPageSize],
+    queryFn: () => fetch(`${API}/api/midline/journal?page=${journalPage}&pageSize=${journalPageSize}`).then(r => r.json()),
   });
 
   const { data: statsData, isError: statsIsError } = useQuery({
@@ -182,8 +186,10 @@ export default function Midline() {
   };
 
   const journals: JournalItem[] = journalData?.data || [];
+  const journalTotal = journalData?.total || 0;
   const stats: StatsData = statsData?.data || {};
   const healthItems: HealthItem[] = healthData?.data || [];
+  const healthTotal = healthData?.total || 0;
 
   // Health table columns
   const healthColumns: ColumnsType<HealthItem> = [
@@ -309,7 +315,17 @@ export default function Midline() {
             columns={healthColumns}
             dataSource={healthItems}
             rowKey="code"
-            pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 只` }}
+            pagination={{
+              current: healthPage,
+              pageSize: healthPageSize,
+              total: healthTotal,
+              showSizeChanger: true,
+              showTotal: (total: number) => `共 ${total} 只`,
+              onChange: (p: number, ps: number) => {
+                setHealthPage(p);
+                setHealthPageSize(ps);
+              },
+            }}
             size="small"
             scroll={{ x: 900 }}
           />
@@ -538,7 +554,17 @@ export default function Midline() {
             columns={journalColumns}
             dataSource={journals}
             rowKey="id"
-            pagination={{ pageSize: 15, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
+            pagination={{
+              current: journalPage,
+              pageSize: journalPageSize,
+              total: journalTotal,
+              showSizeChanger: true,
+              showTotal: (total: number) => `共 ${total} 条`,
+              onChange: (p: number, ps: number) => {
+                setJournalPage(p);
+                setJournalPageSize(ps);
+              },
+            }}
             size="small"
             scroll={{ x: 1000 }}
           />

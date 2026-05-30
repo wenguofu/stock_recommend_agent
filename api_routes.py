@@ -685,15 +685,28 @@ def register_routes(app):
     
     @app.route('/api/watchlist', methods=['GET'])
     def get_watchlist_api():
-        """获取自选股列表"""
+        """获取自选股列表（支持分页）"""
+        page = request.args.get('page', 1, type=int)
+        pageSize = request.args.get('pageSize', 20, type=int)
+
         db = next(get_db())
         try:
             items = get_watchlist(db)
+            total = len(items)
+
+            # Apply pagination
+            start = (page - 1) * pageSize
+            end = start + pageSize
+            paginated = items[start:end]
+
             return jsonify({
                 'success': True,
-                'data': [{'id': item.id, 'code': item.code, 'name': item.name, 
+                'data': [{'id': item.id, 'code': item.code, 'name': item.name,
                           'cost_price': item.cost_price, 'shares': item.shares,
-                          'sort_order': item.sort_order} for item in items]
+                          'sort_order': item.sort_order} for item in paginated],
+                'total': total,
+                'page': page,
+                'pageSize': pageSize,
             })
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500

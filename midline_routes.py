@@ -28,6 +28,9 @@ def register_midline_routes(app):
     @app.route("/api/midline/watchlist-health")
     def midline_watchlist_health():
         """对自选池每只股票打分：趋势强度(满分100)"""
+        page = request.args.get('page', 1, type=int)
+        pageSize = request.args.get('pageSize', 20, type=int)
+
         from models import SessionLocal
         from db import get_watchlist
 
@@ -92,7 +95,17 @@ def register_midline_routes(app):
                         "dl_short_return": None,
                     })
             results.sort(key=lambda x: x["score"], reverse=True)
-            return jsonify({"data": results})
+
+            total = len(results)
+            start = (page - 1) * pageSize
+            paginated = results[start:start + pageSize]
+
+            return jsonify({
+                "data": paginated,
+                "total": total,
+                "page": page,
+                "pageSize": pageSize,
+            })
         finally:
             db.close()
 
@@ -205,10 +218,23 @@ def register_midline_routes(app):
         db = SessionLocal()
         try:
             if request.method == "GET":
+                page = request.args.get('page', 1, type=int)
+                pageSize = request.args.get('pageSize', 15, type=int)
+
+                total_row = db.execute("SELECT COUNT(*) FROM trade_journal").fetchone()
+                total = total_row[0] if total_row else 0
+
+                offset = (page - 1) * pageSize
                 rows = db.execute(
-                    "SELECT * FROM trade_journal ORDER BY entry_date DESC LIMIT 50"
+                    "SELECT * FROM trade_journal ORDER BY entry_date DESC LIMIT ? OFFSET ?",
+                    (pageSize, offset)
                 ).fetchall()
-                return jsonify({"data": [dict(r) for r in rows]})
+                return jsonify({
+                    "data": [dict(r) for r in rows],
+                    "total": total,
+                    "page": page,
+                    "pageSize": pageSize,
+                })
 
             if request.method == "POST":
                 data = request.get_json() or {}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useWatchlistStore } from '../store/watchlistStore';
 import { stockAPI } from '../services/api';
 import AIAnalyzeButton from '../components/AIAnalyzeButton';
@@ -22,6 +22,8 @@ import {
 } from 'antd';
 
 const { Title } = Typography;
+
+const API = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:35000';
 
 type MultiMode = 'fast' | 'balanced' | 'deep';
 
@@ -45,8 +47,10 @@ function getRefetchInterval(): number {
 }
 
 export default function Watchlist() {
-  const { items, loading, addStock, removeStock, error: storeError } = useWatchlistStore();
-  const { message } = App.useApp();
+  const { addStock, removeStock, error: storeError } = useWatchlistStore();
+  const queryClient = useQueryClient();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [codeInput, setCodeInput] = useState('');
   const [costInput, setCostInput] = useState<number | null>(null);
   const [sharesInput, setSharesInput] = useState<number | null>(null);
@@ -74,6 +78,14 @@ export default function Watchlist() {
     }
   }, [showMultiModal, agents, selectedAgentIds.length]);
 
+  // Paginated watchlist data
+  const { data: watchlistPage, isLoading } = useQuery({
+    queryKey: ['watchlist', page, pageSize],
+    queryFn: () => fetch(`${API}/api/watchlist?page=${page}&pageSize=${pageSize}`).then(r => r.json()),
+  });
+  const items = watchlistPage?.data || [];
+  const total = watchlistPage?.total || 0;
+
   const handleAdd = async () => {
     const code = codeInput.trim();
     if (!code) {
@@ -91,6 +103,7 @@ export default function Watchlist() {
     try {
       const realtime = await stockAPI.getRealtime(code);
       await addStock(code, realtime.name, costInput, sharesInput);
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] });
       setCodeInput('');
       setCostInput(null);
       setSharesInput(null);
@@ -122,7 +135,7 @@ export default function Watchlist() {
     try {
       await stockAPI.updateWatchlistPosition(code, editCost, editShares);
       setEditPosition(null);
-      useWatchlistStore.getState().fetchWatchlist();
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] });
     } catch (error) {
       message.error(`更新失败: ${(error as Error).message}`);
     }
@@ -252,7 +265,10 @@ export default function Watchlist() {
             <Button
               size="small"
               danger
-              onClick={() => removeStock(record.code)}
+              onClick={async () => {
+                await removeStock(record.code);
+                queryClient.invalidateQueries({ queryKey: ['watchlist'] });
+              }}
             >
               删除
             </Button>
@@ -346,15 +362,25 @@ export default function Watchlist() {
 
       {/* Watchlist Table */}
       <Card title="我的自选">
-        <Spin spinning={loading}>
-          {items.length === 0 && !loading ? (
+        <Spin spinning={isLoading}>
+          {items.length === 0 && !isLoading ? (
             <div style={{ textAlign: 'center', padding: 32, color: '#999' }}>暂无自选股</div>
           ) : (
             <Table
               dataSource={items}
               columns={columns}
               rowKey={(record) => record.code}
-              pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (total) => `共 ${total} 只` }}
+              pagination={{
+                current: page,
+                pageSize: pageSize,
+                total: total,
+                showSizeChanger: true,
+                showTotal: (total: number) => `共 ${total} 只`,
+                onChange: (p: number, ps: number) => {
+                  setPage(p);
+                  setPageSize(ps);
+                },
+              }}
               size="middle"
             />
           )}

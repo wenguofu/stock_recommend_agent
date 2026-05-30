@@ -8,7 +8,7 @@ import { findEtfs } from '../constants/sectorEtfs';
 import IndexCard from '../components/IndexCard';
 import {
   Row, Col, Card, Segmented, Table, Tag, Descriptions,
-  Progress, Typography, Spin, Space, Button, Empty,
+  Progress, Typography, Spin, Space, Button, Empty, Pagination,
 } from 'antd';
 import {
   ArrowUpOutlined, ArrowDownOutlined, RiseOutlined, FallOutlined,
@@ -29,12 +29,21 @@ const MARKET_SEGMENTED_OPTIONS = [
 ];
 
 export default function Home() {
-  const { items, fetchWatchlist } = useWatchlistStore();
   const [market, setMarket] = useState<'a' | 'us'>('a');
   const [debateFilter, setDebateFilter] = useState<'active' | 'completed'>('active');
+  const [watchlistPage, setWatchlistPage] = useState(1);
+  const [watchlistPageSize, setWatchlistPageSize] = useState(12);
   const location = useLocation();
 
-  useEffect(() => { fetchWatchlist(); }, [fetchWatchlist]);
+  const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:35000';
+
+  // Paginated watchlist data
+  const { data: watchlistData } = useQuery({
+    queryKey: ['home-watchlist', watchlistPage, watchlistPageSize],
+    queryFn: () => fetch(`${apiUrl}/api/watchlist?page=${watchlistPage}&pageSize=${watchlistPageSize}`).then(r => r.json()),
+  });
+  const items = watchlistData?.data || [];
+  const total = watchlistData?.total || 0;
 
   const { data: debateJobs = [], isLoading: debateLoading, refetch: refetchDebates } = useQuery({
     queryKey: ['debate-jobs', debateFilter],
@@ -389,13 +398,28 @@ export default function Home() {
               <Link to="/watchlist">添加自选股</Link>
             </Empty>
           ) : (
-            <Row gutter={[16, 16]}>
-              {filteredItems.map((item) => (
-                <Col xs={24} md={12} lg={8} key={item.code}>
-                  <StockCard code={item.code} name={item.name} />
-                </Col>
-              ))}
-            </Row>
+            <>
+              <Row gutter={[16, 16]}>
+                {filteredItems.map((item) => (
+                  <Col xs={24} md={12} lg={8} key={item.code}>
+                    <StockCard code={item.code} name={item.name} />
+                  </Col>
+                ))}
+              </Row>
+              <div style={{ textAlign: 'center', marginTop: 16 }}>
+                <Pagination
+                  current={watchlistPage}
+                  pageSize={watchlistPageSize}
+                  total={total}
+                  showSizeChanger
+                  showTotal={(t) => `共 ${t} 只`}
+                  onChange={(p, ps) => {
+                    setWatchlistPage(p);
+                    setWatchlistPageSize(ps);
+                  }}
+                />
+              </div>
+            </>
           )}
         </Card>
 
