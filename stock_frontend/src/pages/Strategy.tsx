@@ -90,7 +90,7 @@ export default function Strategy() {
   });
 
   useEffect(() => {
-    if (showPaperModal && paperAccounts?.length > 0) {
+    if (showPaperModal && paperAccounts && paperAccounts.length > 0) {
       setSelectedPaperAccountId((prev) => prev ?? paperAccounts[0].id);
     }
   }, [showPaperModal, paperAccounts]);

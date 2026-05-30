@@ -89,7 +89,7 @@ export default function Home() {
     retry: 3,
   });
 
-  const filteredItems = items.filter((item) => {
+  const filteredItems = items.filter((item: any) => {
     if (market === 'a') return /^\d{6}$/.test(item.code);
     return /^[A-Za-z]{1,5}$/.test(item.code);
   });
@@ -389,7 +389,7 @@ export default function Home() {
 
         {/* 自选股 */}
         <Card
-          title={<Space>{market === 'a' ? 'A股自选' : '美股自选'}<Tag>{filteredItems.length}只</Tag></Space>}
+          title={<Space>{market === 'a' ? 'A股自选' : '美股自选'}<Tag>{total}只</Tag></Space>}
           extra={<Link to="/watchlist">管理自选</Link>}
           style={{ marginBottom: 16 }}
         >
@@ -400,7 +400,7 @@ export default function Home() {
           ) : (
             <>
               <Row gutter={[16, 16]}>
-                {filteredItems.map((item) => (
+                {filteredItems.map((item: any) => (
                   <Col xs={24} md={12} lg={8} key={item.code}>
                     <StockCard code={item.code} name={item.name} />
                   </Col>

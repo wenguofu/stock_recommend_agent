@@ -204,7 +204,7 @@ export default function StockDetail() {
               dailyData?.raw_data?.daily ||
               dailyData?.daily ||
               dailyData?.data ||
-              comprehensiveData?.daily ||
+              (comprehensiveData as any)?.daily ||
               null
             }
           />

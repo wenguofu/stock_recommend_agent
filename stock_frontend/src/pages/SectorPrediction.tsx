@@ -298,7 +298,7 @@ export default function SectorPrediction() {
 
       {/* 评分汇总表 */}
       <Card bodyStyle={{ padding: 0 }}>
-        <Table
+        <Table<SectorPredictionItem>
           columns={columns}
           dataSource={currentData.sectors}
           rowKey="name"

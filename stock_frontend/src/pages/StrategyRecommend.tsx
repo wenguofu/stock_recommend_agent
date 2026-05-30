@@ -110,7 +110,7 @@ export default function StrategyRecommend() {
   });
 
   useEffect(() => {
-    if (showMultiModal && agents?.length > 0 && selectedAgentIds.length === 0) {
+    if (showMultiModal && agents && agents.length > 0 && selectedAgentIds.length === 0) {
       setSelectedAgentIds(agents.map(a => a.id));
     }
   }, [showMultiModal, agents, selectedAgentIds.length]);
@@ -126,7 +126,7 @@ export default function StrategyRecommend() {
   });
 
   useEffect(() => {
-    if (showPaperModal && paperAccounts?.length > 0 && !selectedPaperAccountId) {
+    if (showPaperModal && paperAccounts && paperAccounts.length > 0 && !selectedPaperAccountId) {
       setSelectedPaperAccountId(paperAccounts[0].id);
     }
   }, [showPaperModal, paperAccounts, selectedPaperAccountId]);

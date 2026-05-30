@@ -328,7 +328,7 @@ export default function CandlestickChart({ code, buyZones, sellZones, indicators
 
     if (formattedData.length > 0 && candlestickSeries) {
       try {
-        candlestickSeries.setData(formattedData);
+        candlestickSeries.setData(formattedData.filter((d: any) => d != null) as any);
         console.log(`成功加载 ${formattedData.length} 条K线数据`, formattedData.slice(0, 3));
       } catch (error) {
         console.error('设置K线数据失败:', error, formattedData.slice(0, 3));
@@ -394,19 +394,19 @@ export default function CandlestickChart({ code, buyZones, sellZones, indicators
                         minMove: 0.01,
                       },
                     });
-            maSeries.setData(maData);
+            maSeries.setData(maData.filter((d: any) => d != null) as any);
             maSeriesRef.current.set(key, maSeries);
             console.log(`成功添加${title}均线，共${maData.length}条数据`);
           } catch (error) {
             console.error(`添加${title}均线失败:`, error, maData.slice(0, 3));
             // 如果addLineSeries失败，尝试使用addSeries
             try {
-              const maSeries = chart.addSeries('Line', {
+              const maSeries = (chart as any).addSeries('Line', {
                 color: color,
                 lineWidth: 2,
                 title: title,
               }) as ISeriesApi<'Line'>;
-              maSeries.setData(maData);
+              maSeries.setData(maData.filter((d: any) => d != null) as any);
               maSeriesRef.current.set(key, maSeries);
               console.log(`使用addSeries成功添加${title}均线`);
             } catch (e2) {
@@ -463,7 +463,7 @@ export default function CandlestickChart({ code, buyZones, sellZones, indicators
           // 没有crosshair时，显示最新值
           if (formattedData.length > 0) {
             const latest = formattedData[formattedData.length - 1];
-            legendItems.push(`<span style="color: #333; font-weight: bold;">价格: ${latest.close.toFixed(2)}</span>`);
+            legendItems.push(`<span style="color: #333; font-weight: bold;">价格: ${latest?.close?.toFixed(2) ?? ''}</span>`);
             
             // 显示均线最新值
             if (indicatorsData && Array.isArray(indicatorsData) && indicatorsData.length > 0) {
@@ -504,7 +504,7 @@ export default function CandlestickChart({ code, buyZones, sellZones, indicators
     if (buyZones && chart) {
       buyZones.forEach((zone) => {
         try {
-          chart.createPriceLine({
+          (chart as any).createPriceLine({
             price: zone.price,
             color: '#10b981',
             lineWidth: 2,
@@ -521,7 +521,7 @@ export default function CandlestickChart({ code, buyZones, sellZones, indicators
     if (sellZones && chart) {
       sellZones.forEach((zone) => {
         try {
-          chart.createPriceLine({
+          (chart as any).createPriceLine({
             price: zone.price,
             color: '#ef4444',
             lineWidth: 2,

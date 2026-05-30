@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """数据库操作函数"""
 
-from models import SessionLocal, Watchlist, Config, Agent, AnalysisCache, DebateJob, Strategy, PaperAccount, PaperPosition, PaperOrder, PaperSnapshot, EtfReplacementMap, PaperAutoRule, Recommendation
+from models import SessionLocal, Watchlist, Config, Agent, AnalysisCache, DebateJob, Strategy, PaperAccount, PaperPosition, PaperOrder, PaperSnapshot, PaperPlan, EtfReplacementMap, PaperAutoRule, Recommendation
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import json

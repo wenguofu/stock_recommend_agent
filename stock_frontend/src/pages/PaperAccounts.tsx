@@ -288,7 +288,7 @@ export default function PaperAccounts() {
                 min={0}
                 step={10000}
                 formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}
-                parser={(value) => value?.replace(/,/g, "") as unknown as number}
+                parser={(value) => Number(value?.replace(/,/g, "")) as unknown as 0}
               />
             </Form.Item>
             <Form.Item

@@ -48,6 +48,7 @@ function getRefetchInterval(): number {
 
 export default function Watchlist() {
   const { addStock, removeStock, error: storeError } = useWatchlistStore();
+  const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -285,7 +286,7 @@ export default function Watchlist() {
         <Title level={2} style={{ margin: 0 }}>自选股管理</Title>
         <Space>
         {selectedCodes.length > 0 && (
-          <Button size="small" onClick={() => setSelectedCodes(items.map(i => i.code))}>
+          <Button size="small" onClick={() => setSelectedCodes(items.map((i: any) => i.code))}>
             全选
           </Button>
         )}
@@ -389,7 +390,7 @@ export default function Watchlist() {
 
       {/* Edit Position Modal */}
       <Modal
-        title={`编辑持仓 - ${items.find((it) => it.code === editPosition)?.name || editPosition || ''}`}
+        title={`编辑持仓 - ${items.find((it: any) => it.code === editPosition)?.name || editPosition || ''}`}
         open={editPosition !== null}
         onCancel={() => setEditPosition(null)}
         onOk={() => {
