@@ -228,7 +228,7 @@ export default function HighWinRecommend() {
             <Col span={8}>
               <Text strong>Layer 1 大盘环境</Text>
               <br />
-              <Text type="secondary">涨幅>8% ≥50只 且 跌停 ≤50只</Text>
+              <Text type="secondary">涨幅&gt;8% &ge;50只 且 跌停 &le;50只</Text>
               <br />
               <Text>热门板块 + 流动性 + 上市时间</Text>
             </Col>
