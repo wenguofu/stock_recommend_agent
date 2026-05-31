@@ -2731,7 +2731,7 @@ def register_routes(app):
             return jsonify({"error": str(e)}), 500
 
     @app.route("/api/monitoring/alerts", methods=["GET"])
-    def get_alerts():
+    def get_monitoring_alerts():
         """获取预警列表"""
         try:
             from monitoring import AlertService
