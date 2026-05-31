@@ -1,5 +1,5 @@
 # screening/__init__.py
-# Core screening modules will be imported as they are implemented
-from .layer1_tech_screen import is_market_safe_for_screening
+from .layer1_tech_screen import is_market_safe_for_screening, screen_layer1
+from .hot_sector_manager import HotSectorManager
 
-__all__ = ['is_market_safe_for_screening']
+__all__ = ['is_market_safe_for_screening', 'screen_layer1', 'HotSectorManager']

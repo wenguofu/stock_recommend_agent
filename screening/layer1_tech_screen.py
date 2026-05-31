@@ -39,3 +39,113 @@ def is_market_safe_for_screening() -> Tuple[bool, dict]:
             'reason': 'unknown (api_error)',
             'error': str(e)
         }
+
+
+def screen_layer1(recommendation_type: str = 'short') -> Dict:
+    """
+    Layer 1: 技术面宽筛
+
+    Args:
+        recommendation_type: 'short' (5-20天) 或 'mid' (1-3个月)
+
+    Returns:
+        {
+            'candidates': [code, ...],
+            'market_check': {...},
+            'filter_applied': [...],
+            'count': int
+        }
+    """
+    # 1. 大盘环境检查
+    is_safe, market_details = is_market_safe_for_screening()
+
+    # 如果大盘环境不安全，返回空结果
+    if not is_safe:
+        return {
+            'candidates': [],
+            'market_check': market_details,
+            'filter_applied': ['market_safety'],
+            'count': 0,
+            'recommendation_type': recommendation_type,
+            'warning': '大盘环境不安全，暂停筛选'
+        }
+
+    # 2. 获取热门板块股票
+    from .hot_sector_manager import HotSectorManager
+    sector_mgr = HotSectorManager()
+    hot_codes = set(sector_mgr.get_all_sector_codes())
+
+    # 如果热门板块配置为空，放宽到所有股票
+    if not hot_codes:
+        hot_codes = None
+
+    # 3. 从数据库筛选候选股
+    from models import SessionLocal
+    from sqlalchemy import text
+
+    db = SessionLocal()
+    try:
+        # 基础SQL筛选
+        if recommendation_type == 'short':
+            # 短线条件
+            min_volume = 50000000  # 5000万
+            min_days = 120
+        else:
+            # 中线条件
+            min_volume = 100000000  # 1亿
+            min_days = 250
+
+        if hot_codes:
+            # 热门板块模式：只保留板块内股票
+            code_list = list(hot_codes)
+            placeholders = ','.join([f':c{i}' for i in range(len(code_list))])
+            params = {f'c{i}': code_list[i] for i in range(len(code_list))}
+
+            rows = db.execute(text(f'''
+                SELECT b.code, b.name,
+                       MAX(b.close) as latest_close,
+                       AVG(b.volume) as avg_volume,
+                       COUNT(*) as day_count
+                FROM backtest_data b
+                WHERE b.code REGEXP '^[0-9]{{6}}$'
+                AND b.code IN ({placeholders})
+                GROUP BY b.code, b.name
+                HAVING COUNT(*) >= :min_days
+                AND AVG(b.volume) >= :min_volume
+                ORDER BY AVG(b.volume) DESC
+                LIMIT 500
+            '''), {'min_days': min_days, 'min_volume': min_volume, **params}).fetchall()
+        else:
+            # 全市场模式：无板块限制
+            rows = db.execute(text('''
+                SELECT b.code, b.name,
+                       MAX(b.close) as latest_close,
+                       AVG(b.volume) as avg_volume,
+                       COUNT(*) as day_count
+                FROM backtest_data b
+                WHERE b.code REGEXP '^[0-9]{6}$'
+                GROUP BY b.code, b.name
+                HAVING COUNT(*) >= :min_days
+                AND AVG(b.volume) >= :min_volume
+                ORDER BY AVG(b.volume) DESC
+                LIMIT 500
+            '''), {'min_days': min_days, 'min_volume': min_volume}).fetchall()
+
+        candidates = []
+        for row in rows:
+            candidates.append({
+                'code': row[0],
+                'name': row[1],
+                'avg_volume': float(row[3]) if row[3] else 0
+            })
+
+        return {
+            'candidates': candidates,
+            'market_check': market_details,
+            'filter_applied': ['market_safety', 'hot_sectors', 'volume', 'min_days'],
+            'count': len(candidates),
+            'recommendation_type': recommendation_type
+        }
+
+    finally:
+        db.close()
