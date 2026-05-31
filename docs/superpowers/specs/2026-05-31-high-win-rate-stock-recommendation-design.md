@@ -45,7 +45,7 @@
 | 资金流向 | Sina API | ✅ 实时 |
 | 大盘宽度数据 | akshare | ✅ 实时（涨停/跌停统计） |
 
-### 2.2 热门板块列表
+### 2.2 热门板块列表（动态调整）
 
 | 板块 | 说明 |
 |------|------|
@@ -55,6 +55,29 @@
 | 人工智能 | 政策支持 |
 | 光伏/储能 | 碳中和主线 |
 | 军工 | 确定性增长 |
+
+**动态调整机制**:
+- 每周自动检查一次板块表现
+- 根据近20日涨幅、成交额、成分股数量等指标自动更新板块列表
+- 涨幅排名后50%的板块自动踢出，表现强劲的新兴板块自动纳入
+- 配置存储在 `screening/hot_sectors.json`，包含板块名称、成分股列表、更新时间
+
+```python
+class HotSectorManager:
+    """热门板块管理器"""
+    
+    def update_weekly(self):
+        """每周检查更新热门板块"""
+        # 1. 获取各板块近20日表现
+        # 2. 按涨幅、成交额加权评分
+        # 3. 保留Top 6-8板块
+        # 4. 更新 hot_sectors.json
+        pass
+    
+    def get_current_sectors(self) -> List[str]:
+        """获取当前热门板块列表"""
+        pass
+```
 
 **实现方式**: 维护配置文件 `screening/hot_sectors.json`，包含板块名称和成分股列表。
 
@@ -290,6 +313,8 @@ def calculate_historical_win_rate(code, signal_pattern, hold_period):
 | `screening/layer2_signal_score.py` | Layer 2 多信号评分 |
 | `screening/layer3_backtest_verify.py` | Layer 3 回测验证 |
 | `screening/recommendation_engine.py` | 推荐引擎整合 |
+| `screening/hot_sector_manager.py` | 热门板块动态管理器 |
+| `screening/hot_sectors.json` | 热门板块配置 |
 | `monitoring/daily_monitor.py` | 每日监控 |
 | `monitoring/alert_service.py` | 预警服务 |
 
@@ -301,6 +326,8 @@ def calculate_historical_win_rate(code, signal_pattern, hold_period):
 | `/api/screening/layer2` | POST | Layer 2 评分 |
 | `/api/screening/layer3` | POST | Layer 3 回测验证 |
 | `/api/screening/recommend` | GET | 获取精选推荐 |
+| `/api/screening/sectors` | GET | 获取当前热门板块 |
+| `/api/screening/sectors/refresh` | POST | 手动刷新热门板块 |
 | `/api/monitoring/daily` | GET | 每日监控状态 |
 | `/api/monitoring/alerts` | GET | 预警列表 |
 
