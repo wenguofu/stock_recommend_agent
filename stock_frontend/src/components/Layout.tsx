@@ -5,6 +5,7 @@ import {
   HomeOutlined, StarOutlined, ExperimentOutlined, ThunderboltOutlined,
   BarChartOutlined, SettingOutlined, OrderedListOutlined, TrophyOutlined,
   ScheduleOutlined, LineChartOutlined, AimOutlined, BulbOutlined,
+  SafetyOutlined,
 } from '@ant-design/icons';
 
 const { Sider, Content } = AntLayout;
@@ -20,6 +21,7 @@ const QUANT_NAV = [
   { path: '/paper', label: '模拟盘', icon: <ExperimentOutlined /> },
   { path: '/paper/rankings', label: '收益排名', icon: <TrophyOutlined /> },
   { path: '/recommendations', label: '股票推荐', icon: <BulbOutlined /> },
+  { path: '/high-win-recommend', label: '高胜率推荐', icon: <SafetyOutlined /> },
   { path: '/tasks', label: '任务', icon: <ScheduleOutlined /> },
   { path: '/strategies', label: '策略库', icon: <OrderedListOutlined /> },
   { path: '/strategy', label: '策略推荐', icon: <ThunderboltOutlined /> },

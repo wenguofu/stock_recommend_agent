@@ -16,6 +16,7 @@ import PaperDetail from './pages/PaperDetail';
 import PaperRankings from './pages/PaperRankings';
 import PaperBreakdown from './pages/PaperBreakdown';
 import Recommendations from './pages/Recommendations';
+import HighWinRecommend from './pages/HighWinRecommend';
 import BacktestPage from './pages/BacktestPage';
 import SectorPrediction from './pages/SectorPrediction';
 import Midline from './pages/Midline';
@@ -63,6 +64,7 @@ function App() {
                   <Route path="/paper/rankings" element={<PaperRankings />} />
                   <Route path="/paper/breakdown/:id" element={<PaperBreakdown />} />
                   <Route path="/recommendations" element={<Recommendations />} />
+                  <Route path="/high-win-recommend" element={<HighWinRecommend />} />
                   <Route path="/backtest" element={<BacktestPage />} />
                   <Route path="/sector-prediction" element={<SectorPrediction />} />
                   <Route path="/midline" element={<Midline />} />
