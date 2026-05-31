@@ -2643,6 +2643,121 @@ def register_routes(app):
             return jsonify({"error": str(e)}), 500
 
     # ═══════════════════════════════════════════════════════════
+    # 新版股票推荐 API (四层筛选)
+    # ═══════════════════════════════════════════════════════════
+
+    @app.route("/api/screening/recommend", methods=["GET"])
+    def get_screening_recommendations():
+        """获取精选推荐 - 四层筛选"""
+        try:
+            rec_type = request.args.get("type", "short")  # short | mid
+            top_n = int(request.args.get("top_n", 5))
+            from screening import get_recommendations
+            result = get_recommendations(recommendation_type=rec_type, top_n=top_n)
+            return jsonify(result)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/screening/sectors", methods=["GET"])
+    def get_hot_sectors():
+        """获取当前热门板块"""
+        try:
+            from screening import HotSectorManager
+            mgr = HotSectorManager()
+            return jsonify({
+                "sectors": mgr.get_current_sectors(),
+                "config": mgr.get_config()
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/screening/sectors/refresh", methods=["POST"])
+    def refresh_hot_sectors():
+        """刷新热门板块"""
+        try:
+            from screening import HotSectorManager
+            mgr = HotSectorManager()
+            result = mgr.update_weekly()
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/screening/market-check", methods=["GET"])
+    def check_market_safety():
+        """检查大盘环境是否适合筛选"""
+        try:
+            from screening import is_market_safe_for_screening
+            is_safe, details = is_market_safe_for_screening()
+            return jsonify({
+                "is_safe": is_safe,
+                "details": details
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/screening/layer1", methods=["POST"])
+    def run_layer1_screening():
+        """执行Layer 1筛选"""
+        try:
+            rec_type = request.json.get("type", "short") if request.json else "short"
+            from screening import screen_layer1
+            result = screen_layer1(recommendation_type=rec_type)
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/screening/layer2", methods=["POST"])
+    def run_layer2_scoring():
+        """执行Layer 2评分"""
+        try:
+            from screening import screen_layer1, score_layer2
+            rec_type = request.json.get("type", "short") if request.json else "short"
+            layer1_result = screen_layer1(recommendation_type=rec_type)
+            result = score_layer2(layer1_result)
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/monitoring/daily", methods=["GET"])
+    def get_daily_monitoring():
+        """获取每日监控状态"""
+        try:
+            from monitoring import DailyMonitor
+            monitor = DailyMonitor()
+            status = monitor.get_daily_status()
+            return jsonify(status)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/monitoring/alerts", methods=["GET"])
+    def get_alerts():
+        """获取预警列表"""
+        try:
+            from monitoring import AlertService
+            service = AlertService()
+            # 从请求获取持仓
+            from models import SessionLocal
+            from sqlalchemy import text
+            db = SessionLocal()
+            try:
+                positions = db.execute(text('''
+                    SELECT code, name, shares, avg_cost, current_price
+                    FROM paper_positions WHERE shares > 0
+                ''')).fetchall()
+                pos_list = [{
+                    'code': p[0], 'name': p[1], 'shares': p[2],
+                    'cost': p[3], 'current_price': p[4],
+                    'pnl_pct': round((p[4]/p[3]-1)*100, 2) if p[3] and p[3] > 0 and p[4] else 0
+                } for p in positions]
+            finally:
+                db.close()
+            alerts = service.check_alerts(pos_list)
+            return jsonify({"alerts": alerts, "history": service.get_recent_alerts()})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # ═══════════════════════════════════════════════════════════
     # 回测 API
     # ═══════════════════════════════════════════════════════════
 
@@ -2800,17 +2915,11 @@ def register_routes(app):
 
     @app.route('/api/fundamentals/<code>')
     def get_fundamentals(code):
-        """获取最新财务数据（db缓存优先，无缓存时自动拉取）"""
+        """获取最新财务数据（MySQL优先，毫秒级）"""
         try:
             code_str = str(code).strip()
-            db = next(get_db())
-            try:
-                data = get_latest_financial(db, code_str)
-                if not data:
-                    data = fetch_and_cache(code_str, db)
-                return jsonify(data if data else {})
-            finally:
-                db.close()
+            data = get_fundamental_data(code_str)
+            return jsonify(data if data else {})
         except Exception as e:
             error_msg = str(e)
             print(f"[API] 获取财务数据失败: {error_msg}")
