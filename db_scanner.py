@@ -11,13 +11,15 @@ DB全量突破扫描器 v1 — 直接读 backtest_data，扫全市场4804只股�
     uv run python db_scanner.py --min-days 60  # 最小横盘60天
 """
 
-import sqlite3
 import os
 import sys
 from datetime import datetime
 
+sys.path.insert(0, os.path.dirname(__file__))
+from models import SessionLocal
+from sqlalchemy import text
+
 # ── 配置 ──────────────────────────────────────────
-DB_PATH = os.path.join(os.path.dirname(__file__), "database.db")
 EVAL_DIR = os.path.join(os.path.dirname(__file__), "eval_result")
 
 MIN_CONSOLIDATION_DAYS = 40     # 最少横盘40天
@@ -30,53 +32,51 @@ MAX_BREAKOUT_AGE = 30           # 突破必须在最近30天内
 MIN_EXT_PCT = -5                # 当前价不能低于横盘底部5%以上（过滤失败突破）
 
 
-def get_all_stocks_kline(db_path, min_records=60):
+def get_all_stocks_kline(db_param=None, min_records=60):
     """一次性从DB拉所有股票的K线数据"""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-
-    # 先找数据量足够（≥min_records天）的股票
-    cur.execute("""
-        SELECT code, COUNT(*) as cnt
-        FROM backtest_data
-        GROUP BY code
-        HAVING cnt >= ?
-        ORDER BY cnt DESC
-    """, (min_records,))
-
-    codes = [r[0] for r in cur.fetchall()]
-    print(f"📊 {len(codes)} 只股票有≥{min_records}天数据，开始拉K线...")
-
-    # 批量拉取所有股票最近LOOKBACK_DAYS的K线
-    stock_data = {}
-    for i, code in enumerate(codes):
-        cur.execute("""
-            SELECT date, open, high, low, close, volume
+    db = SessionLocal()
+    try:
+        # 先找数据量足够（≥min_records天）的股票
+        rows = db.execute(text("""
+            SELECT code, COUNT(*) as cnt
             FROM backtest_data
-            WHERE code = ?
-            ORDER BY date DESC
-            LIMIT ?
-        """, (code, LOOKBACK_DAYS))
-        rows = cur.fetchall()
-        if len(rows) >= min_records:
-            # 转换成按日期升序排列的字典列表
-            data = []
-            for row in reversed(rows):
-                data.append({
-                    "date": row[0],
-                    "open": row[1], "high": row[2],
-                    "low": row[3], "close": row[4],
-                    "volume": row[5],
-                })
-            stock_data[code] = data
+            GROUP BY code
+            HAVING cnt >= :min_rec
+            ORDER BY cnt DESC
+        """), {'min_rec': min_records}).fetchall()
 
-        if (i + 1) % 500 == 0:
-            print(f"  已加载 {i+1}/{len(codes)}...")
+        codes = [r[0] for r in rows]
+        print(f"📊 {len(codes)} 只股票有≥{min_records}天数据，开始拉K线...")
 
-    conn.close()
-    print(f"✅ 完成：{len(stock_data)} 只股票可用")
-    return stock_data
+        # 批量拉取所有股票最近LOOKBACK_DAYS的K线
+        stock_data = {}
+        for i, code in enumerate(codes):
+            rows = db.execute(text("""
+                SELECT date, open, high, low, close, volume
+                FROM backtest_data
+                WHERE code = :code
+                ORDER BY date DESC
+                LIMIT :limit
+            """), {'code': code, 'limit': LOOKBACK_DAYS}).fetchall()
+            if len(rows) >= min_records:
+                # 转换成按日期升序排列的字典列表
+                data = []
+                for row in reversed(rows):
+                    data.append({
+                        "date": row[0],
+                        "open": float(row[1] or 0), "high": float(row[2] or 0),
+                        "low": float(row[3] or 0), "close": float(row[4] or 0),
+                        "volume": float(row[5] or 0),
+                    })
+                stock_data[code] = data
+
+            if (i + 1) % 500 == 0:
+                print(f"  已加载 {i+1}/{len(codes)}...")
+
+        print(f"✅ 完成：{len(stock_data)} 只股票可用")
+        return stock_data
+    finally:
+        db.close()
 
 
 def detect_breakout(kline_data):
@@ -295,7 +295,7 @@ def main():
     print(f"🔍 DB全量扫描启动...")
     print(f"   最小横盘: {min_days}天 | 最大振幅: {MAX_CONSOLIDATION_RANGE*100}% | 最小量比: {MIN_VOLUME_EXPANSION}x")
 
-    stock_data = get_all_stocks_kline(DB_PATH, min_records=min_days + 10)
+    stock_data = get_all_stocks_kline(min_records=min_days + 10)
     if not stock_data:
         print("❌ 无可用数据")
         return

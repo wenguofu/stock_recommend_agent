@@ -32,6 +32,14 @@ export default function StockDetail() {
     enabled: !!codeStr,
   });
 
+  // 基本面独立快速加载（MySQL毫秒级）
+  const { data: fundamentalData, isLoading: fundamentalLoading } = useQuery({
+    queryKey: ['fundamental', codeStr],
+    queryFn: () => stockAPI.getFundamental(codeStr),
+    enabled: !!codeStr,
+    staleTime: 60 * 60 * 1000, // 1小时内不重新请求
+  });
+
   const { data: sentimentData, isLoading: sentimentLoading } = useQuery({
     queryKey: ['sentiment', codeStr],
     queryFn: () => stockAPI.getSentiment(codeStr, 7),
@@ -309,27 +317,64 @@ export default function StockDetail() {
     {
       key: 'fundamental',
       label: '基本面',
-      children: comprehensiveData?.fundamental ? (
+      children: fundamentalLoading ? (
+        <Spin />
+      ) : fundamentalData || comprehensiveData?.fundamental ? (
         <Card title="基本面数据">
           <Descriptions column={{ xs: 2, sm: 3, md: 4 }} bordered size="small">
-            {comprehensiveData.fundamental.pe != null && (
+            {(fundamentalData?.pe ?? comprehensiveData?.fundamental?.pe) != null && (
               <Descriptions.Item label="市盈率(PE)">
-                {comprehensiveData.fundamental.pe.toFixed(2)}
+                {(fundamentalData?.pe ?? comprehensiveData?.fundamental?.pe).toFixed(2)}
               </Descriptions.Item>
             )}
-            {comprehensiveData.fundamental.pb != null && (
+            {(fundamentalData?.pb ?? comprehensiveData?.fundamental?.pb) != null && (
               <Descriptions.Item label="市净率(PB)">
-                {comprehensiveData.fundamental.pb.toFixed(2)}
+                {(fundamentalData?.pb ?? comprehensiveData?.fundamental?.pb).toFixed(2)}
               </Descriptions.Item>
             )}
-            {comprehensiveData.fundamental.roe != null && (
+            {(fundamentalData?.roe ?? comprehensiveData?.fundamental?.roe) != null && (
               <Descriptions.Item label="ROE">
-                {comprehensiveData.fundamental.roe.toFixed(2)}%
+                {(fundamentalData?.roe ?? comprehensiveData?.fundamental?.roe).toFixed(2)}%
               </Descriptions.Item>
             )}
-            {comprehensiveData.fundamental.eps != null && (
+            {(fundamentalData?.eps ?? comprehensiveData?.fundamental?.eps) != null && (
               <Descriptions.Item label="EPS">
-                {comprehensiveData.fundamental.eps.toFixed(2)}
+                {(fundamentalData?.eps ?? comprehensiveData?.fundamental?.eps).toFixed(2)}
+              </Descriptions.Item>
+            )}
+            {(fundamentalData?.gross_margin ?? comprehensiveData?.fundamental?.gross_margin) != null && (
+              <Descriptions.Item label="毛利率">
+                {(fundamentalData?.gross_margin ?? comprehensiveData?.fundamental?.gross_margin).toFixed(2)}%
+              </Descriptions.Item>
+            )}
+            {(fundamentalData?.net_margin ?? comprehensiveData?.fundamental?.net_margin) != null && (
+              <Descriptions.Item label="净利率">
+                {(fundamentalData?.net_margin ?? comprehensiveData?.fundamental?.net_margin).toFixed(2)}%
+              </Descriptions.Item>
+            )}
+            {(fundamentalData?.revenue ?? comprehensiveData?.fundamental?.revenue) != null && (
+              <Descriptions.Item label="营业收入(亿)">
+                {(fundamentalData?.revenue ?? comprehensiveData?.fundamental?.revenue).toFixed(2)}
+              </Descriptions.Item>
+            )}
+            {(fundamentalData?.net_profit ?? comprehensiveData?.fundamental?.net_profit) != null && (
+              <Descriptions.Item label="净利润(亿)">
+                {(fundamentalData?.net_profit ?? comprehensiveData?.fundamental?.net_profit).toFixed(2)}
+              </Descriptions.Item>
+            )}
+            {(fundamentalData?.revenue_growth ?? comprehensiveData?.fundamental?.revenue_growth) != null && (
+              <Descriptions.Item label="营收同比">
+                {(fundamentalData?.revenue_growth ?? comprehensiveData?.fundamental?.revenue_growth).toFixed(2)}%
+              </Descriptions.Item>
+            )}
+            {(fundamentalData?.profit_growth ?? comprehensiveData?.fundamental?.profit_growth) != null && (
+              <Descriptions.Item label="利润同比">
+                {(fundamentalData?.profit_growth ?? comprehensiveData?.fundamental?.profit_growth).toFixed(2)}%
+              </Descriptions.Item>
+            )}
+            {(fundamentalData?.report_date ?? comprehensiveData?.fundamental?.report_date) && (
+              <Descriptions.Item label="报告期">
+                {fundamentalData?.report_date ?? comprehensiveData?.fundamental?.report_date}
               </Descriptions.Item>
             )}
           </Descriptions>

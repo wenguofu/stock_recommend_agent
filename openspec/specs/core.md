@@ -8,12 +8,12 @@ Flask 应用入口，CORS 全开，集成请求日志中间件。
 |--------|----------|--------|
 | 端口 | `API_PORT` | 35000 |
 | Debug | `FLASK_DEBUG=1` | `False` |
-| 数据库 | 硬编码 `database.db` | — |
+| 数据库 | `DATABASE_URL` | `sqlite:///database.db` |
 
 ### 路由注册
 
 ```python
-register_routes(app)       # api_routes.py (主路由，3898行)
+register_routes(app)       # api_routes.py (主路由)
 register_risk_routes(app)  # risk_routes.py (风险管理)
 register_factor_routes(app)# factor_routes.py (因子+ML)
 ```
@@ -29,17 +29,12 @@ register_factor_routes(app)# factor_routes.py (因子+ML)
 ```python
 API_BASE = os.environ.get("A_STOCK_API", "http://127.0.0.1:35000")
 API_PORT = int(os.environ.get("API_PORT", 35000))
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///database.db")
 ```
-
-### 消费者
-
-- `scheduler.py` — 使用 `f"{API_BASE}/api/..."`
-- `sector_analysis.py`, `scripts/recommendation_gen.py`, `scripts/sector_update.py`, `sector_utils.py`
-- 前端通过 `import.meta.env.VITE_API_BASE_URL` + `.env` 覆盖
 
 ## models.py
 
-SQLAlchemy ORM，21 张表，SQLite。
+SQLAlchemy ORM，26 张表。**支持 SQLite / MySQL 双引擎**，通过 `DATABASE_URL` 环境变量切换。
 
 | 表 | 用途 |
 |----|------|
@@ -53,13 +48,23 @@ SQLAlchemy ORM，21 张表，SQLite。
 | stock_financials | 基本面 |
 | risk_reports | 风险缓存 |
 | recommendations | 推荐结果 |
+| recommendation_tracks | 推荐跟踪 |
+| trade_journal | 交易日志 |
+| market_alert_log | 大盘预警 |
+| portfolio_configs | 组合配置 |
+| monitor_tasks | 盯盘任务 |
+
+### 引擎工厂
+
+```python
+get_engine(url=None)  # 根据 DATABASE_URL 创建引擎
+reset_engine(url)     # 运行时切换数据库
+```
+
+- MySQL: pool_size=10, pool_recycle=3600, pool_pre_ping=True
+- SQLite: WAL 模式, check_same_thread=False, busy_timeout=15s
+- `.env` 文件自动加载（通过 python-dotenv）
 
 ## db.py
 
-CRUD 操作层，1012 行。`search_etf_replacement()` 内嵌 688xxx→588000 兜底逻辑。
-
-### 已知问题
-
-- [ ] `DB_PATH` 硬编码，不支持环境变量覆盖
-- [ ] `search_etf_replacement()` 返回 dict 而非 ORM 对象（类型不一致）
-- [ ] `create_paper_account()` 有死代码 `if "auto_trade" in kwargs`（kwargs 已在签名中显式声明）
+CRUD 操作层，1012 行。包含自选股、Agent、策略、辩论任务、模拟盘、ETF映射、推荐、财务数据、K线缓存、回测数据的完整 CRUD。

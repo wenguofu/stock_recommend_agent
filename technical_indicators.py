@@ -180,14 +180,12 @@ def get_comprehensive_data(code):
         print(f"[API] 获取 {code} 资金流向...")
         result['money_flow'] = get_money_flow(code)
         time.sleep(0.1)
-        
-        print(f"[API] 获取 {code} 基本面数据...")
-        result['fundamental'] = get_fundamental_data(code)
-        time.sleep(0.1)
-        
+
         print(f"[API] 获取 {code} 行业对比数据...")
         result['industry_comparison'] = get_industry_comparison(code, sector_info=result.get('sector_info'))
-    
+
+    # fundamental already fetched earlier for speed
+
     # 计算换手率（仅A股有流通股本数据）
     if not is_us and result['realtime'] and result['fundamental']:
         volume = result['realtime'].get('volume')
@@ -256,6 +254,10 @@ def get_comprehensive_data_with_indicators(code):
                 result['indicators'] = indicators_summary
     else:
         # A股：使用新浪/东方财富接口
+        # ── 基本面数据最优先（MySQL毫秒级出数据）──
+        print(f"[API] 获取 {code} 基本面数据...")
+        result['fundamental'] = get_fundamental_data(code)
+
         print(f"[API] 获取 {code} 5分钟K线...")
         result['minute_5'] = get_minute_kline(code, scale=5, datalen=240)
         time.sleep(0.1)
@@ -311,9 +313,7 @@ def get_comprehensive_data_with_indicators(code):
         result['money_flow'] = get_money_flow(code)
         time.sleep(0.1)
         
-        print(f"[API] 获取 {code} 基本面数据...")
-        result['fundamental'] = get_fundamental_data(code)
-        time.sleep(0.1)
+        # fundamental already fetched earlier for speed
         
         print(f"[API] 获取 {code} 行业对比数据...")
         result['industry_comparison'] = get_industry_comparison(code, sector_info=result.get('sector_info'))

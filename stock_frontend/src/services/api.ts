@@ -162,6 +162,11 @@ class StockAPI {
     return response.data || response;
   }
 
+  // 基本面快速接口（MySQL毫秒级）
+  async getFundamental(code: string): Promise<any> {
+    return this.request(`/api/fundamentals/${code}`);
+  }
+
   async getSentiment(code: string, days: number = 7): Promise<any> {
     return this.request(`/api/sentiment/all/${code}?days=${days}&latest=10&hot=10`);
   }

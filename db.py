@@ -569,13 +569,16 @@ def get_latest_recommendations(db: Session, rec_type: str = 'daily', limit_per_s
     """获取每种策略最新的推荐"""
     import json
     from sqlalchemy import func
-    
+    from datetime import datetime, timedelta
+
+    seven_days_ago = datetime.now() - timedelta(days=7)
+
     results = {}
     for s in ['youzi', 'lianghua', 'jichang']:
         items = db.query(Recommendation).filter(
             Recommendation.rec_type == rec_type,
             Recommendation.strategy == s,
-            Recommendation.created_at >= func.date('now', '-7 days')
+            Recommendation.created_at >= seven_days_ago
         ).order_by(Recommendation.rank.asc()).limit(limit_per_strategy).all()
         if items:
             results[s] = items

@@ -1,28 +1,42 @@
 #!/usr/bin/env python3
 """随机森林调参 — 精简版: 50股 × 3轮 × 最后1000股验证"""
-import sys, os, json, random, sqlite3, time
+import sys, os, json, random, time
 from datetime import datetime
 import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(__file__))
-DB = os.path.join(os.path.dirname(__file__), 'database.db')
+from models import SessionLocal
+from sqlalchemy import text
+
+def _get_db():
+    return SessionLocal()
 
 def get_codes(n=200, min_d=250):
-    conn = sqlite3.connect(DB)
-    rows = conn.execute("SELECT code FROM backtest_data GROUP BY code HAVING COUNT(*)>=? ORDER BY COUNT(*) DESC", (min_d,)).fetchall()
-    conn.close()
-    codes = [r[0] for r in rows]
-    random.seed(42)
-    return random.sample(codes, min(n, len(codes)))
+    """获取有足够数据的股票代码"""
+    db = _get_db()
+    try:
+        result = db.execute(
+            text("SELECT code FROM backtest_data GROUP BY code HAVING COUNT(*)>=:min_d ORDER BY COUNT(*) DESC"),
+            {'min_d': min_d}
+        ).fetchall()
+        codes = [r[0] for r in result]
+        random.seed(42)
+        return random.sample(codes, min(n, len(codes)))
+    finally:
+        db.close()
 
-def load_df(code):
-    conn = sqlite3.connect(DB)
-    df = pd.read_sql_query("SELECT date,open,high,low,close,volume FROM backtest_data WHERE code=? ORDER BY date", conn, params=(code,))
-    conn.close()
-    if len(df) < 80: return None
-    for c in ['close','high','low','open','volume']: df[c] = df[c].astype(float)
-    return df
+def _load_backtest_df(code):
+    """从数据库加载单只股票的OHLCV到DataFrame"""
+    db = _get_db()
+    try:
+        df = pd.read_sql_query(
+            "SELECT date,open,high,low,close,volume FROM backtest_data WHERE code=:code ORDER BY date",
+            db.bind, params={'code': code}
+        )
+        return df
+    finally:
+        db.close()
 
 def build_XY(df):
     c = df['close'].values; h = df['high'].values; l = df['low'].values
@@ -80,8 +94,8 @@ def test_params(codes, param_sets, name, n_stocks=50):
     for label, params in param_sets:
         tc = 0; tp = 0; t0 = time.time()
         for code in codes[:n_stocks]:
-            df = load_df(code)
-            if df is None: continue
+            df = _load_backtest_df(code)
+            if df is None or len(df) < 80: continue
             X, y = build_XY(df)
             if X is None: continue
             acc, n = walk_forward(X, y, params)
@@ -149,7 +163,7 @@ def main():
     codes1k = get_codes(1000, 250)
     tc = 0; tp = 0
     for i, code in enumerate(codes1k):
-        df = load_df(code)
+        df = _load_backtest_df(code)
         if df is None: continue
         X, y = build_XY(df)
         if X is None: continue
@@ -166,7 +180,7 @@ def main():
     print(f"\n--- 择时+PF (RF信号) ---")
     trades = []
     for code in codes1k:
-        df = load_df(code)
+        df = _load_backtest_df(code)
         if df is None: continue
         X, y = build_XY(df)
         if X is None: continue

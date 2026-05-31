@@ -14,7 +14,6 @@ import os
 import json
 import math
 import random
-import sqlite3
 import traceback
 from datetime import datetime
 from collections import defaultdict
@@ -24,46 +23,48 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'database.db')
+from models import SessionLocal
+from sqlalchemy import text
 
 
 def get_stock_codes(n=100, min_days=180):
     """从DB获取有足够数据的股票"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT code, COUNT(*) as cnt, MAX(date) as latest
-        FROM backtest_data
-        GROUP BY code
-        HAVING cnt >= ?
-        ORDER BY cnt DESC
-    """, (min_days,))
-    rows = cursor.fetchall()
-    conn.close()
-
-    codes = [r[0] for r in rows]
-    if len(codes) > n:
-        random.seed(42)
-        codes = random.sample(codes, n)
-    return codes
+    db = SessionLocal()
+    try:
+        rows = db.execute(text("""
+            SELECT code, COUNT(*) as cnt, MAX(date) as latest
+            FROM backtest_data
+            GROUP BY code
+            HAVING cnt >= :min_d
+            ORDER BY cnt DESC
+        """), {'min_d': min_days}).fetchall()
+        codes = [r[0] for r in rows]
+        if len(codes) > n:
+            random.seed(42)
+            codes = random.sample(codes, n)
+        return codes
+    finally:
+        db.close()
 
 
 def load_stock_data(code):
     """加载单只股票的OHLCV数据"""
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query(
-        "SELECT date, open, high, low, close, volume, turnover FROM backtest_data WHERE code=? ORDER BY date",
-        conn, params=(code,)
-    )
-    conn.close()
-    if len(df) < 60:
-        return None
-    df['close'] = df['close'].astype(float)
-    df['high'] = df['high'].astype(float)
-    df['low'] = df['low'].astype(float)
-    df['open'] = df['open'].astype(float)
-    df['volume'] = df['volume'].astype(float)
-    return df
+    db = SessionLocal()
+    try:
+        df = pd.read_sql_query(
+            "SELECT date, open, high, low, close, volume, turnover FROM backtest_data WHERE code=:code ORDER BY date",
+            db.bind, params={'code': code}
+        )
+        if len(df) < 60:
+            return None
+        df['close'] = df['close'].astype(float)
+        df['high'] = df['high'].astype(float)
+        df['low'] = df['low'].astype(float)
+        df['open'] = df['open'].astype(float)
+        df['volume'] = df['volume'].astype(float)
+        return df
+    finally:
+        db.close()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -77,15 +78,17 @@ def load_index_data():
     global _index_cache
     if _index_cache is not None:
         return _index_cache
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query(
-        "SELECT date, close FROM backtest_data WHERE code='000001' ORDER BY date",
-        conn
-    )
-    conn.close()
-    df['close'] = df['close'].astype(float)
-    _index_cache = df
-    return df
+    db = SessionLocal()
+    try:
+        df = pd.read_sql_query(
+            "SELECT date, close FROM backtest_data WHERE code='000001' ORDER BY date",
+            db.bind
+        )
+        df['close'] = df['close'].astype(float)
+        _index_cache = df
+        return df
+    finally:
+        db.close()
 
 
 def get_index_return(date_str, horizon=5):

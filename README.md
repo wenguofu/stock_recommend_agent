@@ -25,27 +25,47 @@
 
 ## 🚀 快速启动
 
+### 前置依赖
+- Python 3.9+ / Node.js 18+
+- **MySQL 9.0+** (本地安装，默认数据库 `stock_trading`)
+
 ```bash
+# 安装 MySQL (macOS)
+brew install mysql && brew services start mysql
+
+# 创建数据库和用户
+mysql -u root -e "
+  CREATE DATABASE IF NOT EXISTS stock_trading CHARACTER SET utf8mb4;
+  CREATE USER IF NOT EXISTS 'stock_user'@'localhost' IDENTIFIED BY 'stock_pass_2024';
+  GRANT ALL PRIVILEGES ON stock_trading.* TO 'stock_user'@'localhost';
+"
+
 # 克隆项目
 git clone git@github.com:wenguofu/stock_recommend_agent.git
 cd a-stock-trading
 
-# 方式一：Makefile（推荐）
-make dev          # 一键启动后端 + 前端
+# 安装 Python 依赖
+pip install -r requirements.txt
 
-# 方式二：手动
-python3 api_server.py &          # 后端 → http://localhost:35000
-cd stock_frontend && npm run dev # 前端 → http://localhost:5173
-
-# 方式三：Docker
-docker compose up
-```
-
-### 环境变量配置
-```bash
+# 配置环境变量
 cp .env.example .env
 # 编辑 .env 填入 AI 密钥（优先级高于 DB 存储）
+# DATABASE_URL 默认指向 MySQL，如需切回 SQLite 注释掉即可
+
+# 启动
+python3 api_server.py &          # 后端 → http://localhost:35000
+cd stock_frontend && npm install && npm run dev  # 前端 → http://localhost:5173
 ```
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `DATABASE_URL` | `mysql+pymysql://stock_user:.../stock_trading` | 数据库连接，支持 SQLite/MySQL |
+| `API_PORT` | 35000 | API 服务端口 |
+| `AUTH_ENABLED` | 0 | 是否启用 API 认证 |
+| `OPENAI_API_KEY` | — | OpenAI API Key |
+| `DEEPSEEK_API_KEY` | — | DeepSeek API Key |
 
 ---
 
@@ -54,13 +74,15 @@ cp .env.example .env
 ```
 a-stock-trading/
 ├── api_server.py          # Flask 入口
-├── api_routes.py          # 主路由 (3898行)
+├── api_routes.py          # 主路由
 ├── midline_routes.py      # 中长线交易 API
 ├── ai_service.py          # AI 服务调用
-├── config.py              # 共享配置 (API_BASE)
-├── models.py / db.py      # ORM 模型 + CRUD
+├── config.py              # 共享配置 (API_BASE, DATABASE_URL)
+├── models.py              # ORM 模型 (26表, 支持 SQLite/MySQL)
+├── db.py                  # CRUD 操作层
 ├── scheduler.py           # 内置任务调度器
-├── data_fetchers.py       # 数据获取层 (76KB)
+├── data_fetchers.py       # 数据获取层 (基本面上MySQL优先)
+├── fundamental_data.py    # 基本面数据模块 (akshare THS)
 ├── backtest_engine.py     # 回测引擎
 ├── risk_management.py     # 风险管理
 ├── ml_predictor.py        # ML 预测
@@ -68,21 +90,26 @@ a-stock-trading/
 ├── retry.py               # 外部 API 重试装饰器
 ├── ai_config.py           # AI 密钥管理 (env→DB)
 ├── logging_config.py      # JSON 结构化日志
+├── migrate_to_mysql.py    # SQLite→MySQL 迁移脚本
+├── fill_missing_data.py   # 日K数据补全 (东方财富 HTTP)
+├── pull_watchlist_financials.py  # 自选股财报补全
 ├── stock_frontend/        # React + Vite 前端
 │   ├── src/pages/
 │   │   ├── Home.tsx       # 首页大盘
-│   │   ├── Midline.tsx    # 📊 中长线看板
-│   │   └── StockDetail.tsx
+│   │   ├── Midline.tsx    # 中长线看板
+│   │   └── StockDetail.tsx # 个股详情 (基本面独立快速加载)
 │   ├── src/components/    # 可复用组件
 │   └── src/__tests__/     # 前端测试
+├── strategies/            # 选股策略 (突破/十倍股)
 ├── tests/                 # 后端测试
 ├── openspec/              # OpenSpec 规范文档
-│   ├── specs/             # 8 个模块规格
-│   └── changes/           # 变更提案归档
+│   ├── specs/             # 模块规格
+│   └── changes/archive/   # 变更提案归档
 ├── scripts/               # 定时任务脚本
 ├── Dockerfile
 ├── docker-compose.yml
 ├── Makefile
+├── .env                   # 环境变量 (gitignore)
 └── .env.example
 ```
 
@@ -187,8 +214,24 @@ openspec archive <name>
 openspec/changes/archive/
 ├── 2026-05-24-init-specs/        # 初始化系统规格文档
 ├── 2026-05-24-optimize-and-test/ # 代码优化 + 测试
-└── 2026-05-24-midline-strategy/  # 中长线交易模块
+├── 2026-05-24-midline-strategy/  # 中长线交易模块
+└── 2026-05-30-sqlite-to-mysql/   # SQLite→MySQL 迁移（26表,127万行）
 ```
+
+---
+
+## 📡 数据源
+
+| 数据 | 来源 | 协议 | 速度 |
+|------|------|------|------|
+| 实时行情 | 腾讯 qt.gtimg.cn | HTTP | 实时 |
+| 日K线 | 东方财富 push2 + 本地 MySQL backtest_data | HTTP | 批量 3-5s/只 |
+| 基本面 | **本地 MySQL stock_financials** → 东方财富 DataCenter | HTTP | <100ms |
+| 资金流向 | Sina API | HTTP | 实时 |
+| 财务数据批量 | 东方财富 `RPT_F10_FINANCE_MAINFINADATA` | HTTPS | 2-4s/只 |
+| 美股 | Yahoo Finance (yfinance) | HTTPS | 实时 |
+
+> macOS Python 3.9 + LibreSSL 环境下，东方财富 HTTPS API 会断连。K线拉取改用 `http://push2his.eastmoney.com`。
 
 ---
 

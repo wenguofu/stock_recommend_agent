@@ -1019,9 +1019,59 @@ def get_money_flow_realtime_kline(code, klt=1, lmt=0):
 
 def get_fundamental_data(code):
     """
-    获取股票的基本面数据（使用东方财富API）
+    获取股票的基本面数据（优先MySQL缓存，备用东方财富API）
     包括：估值指标（PE、PB、PS等）、财务指标（ROE、ROA等）、财务数据（营收、利润等）
     """
+    # ── 优先从 MySQL 缓存读取 ──
+    try:
+        from models import SessionLocal
+        from db import get_latest_financial, get_backtest_data
+        db = SessionLocal()
+        try:
+            fin = get_latest_financial(db, code)
+            if fin:
+                # 计算PE/PB：用最新股价
+                pe_val = fin.get('pe_ttm')
+                pb_val = fin.get('pb')
+                kline = get_backtest_data(db, code)
+                latest_price = None
+                if kline and len(kline) > 0:
+                    latest_price = kline[-1].get('close')
+
+                # 如果没有直接存储的PE，用 股价/EPS 估算
+                if not pe_val and latest_price and fin.get('eps'):
+                    eps_val = fin['eps']
+                    if eps_val > 0:  # 只对盈利公司计算PE
+                        rd = str(fin.get('report_date', ''))
+                        if '-03-31' in rd or '-06-30' in rd or '-09-30' in rd:
+                            eps_val = eps_val * 4  # 季报年化
+                        pe_val = round(latest_price / eps_val, 2)
+
+                return {
+                    'code': code,
+                    'name': None,
+                    'pe_ttm': pe_val,
+                    'pe': pe_val,
+                    'pb': pb_val,
+                    'pb_ratio': pb_val,
+                    'roe': fin.get('roe'),
+                    'eps': fin.get('eps'),
+                    'revenue': (fin.get('revenue') / 1e8) if fin.get('revenue') else None,
+                    'revenue_growth': fin.get('revenue_yoy'),
+                    'net_profit': (fin.get('net_profit') / 1e8) if fin.get('net_profit') else None,
+                    'profit_growth': fin.get('profit_yoy'),
+                    'gross_margin': fin.get('gross_margin'),
+                    'net_margin': fin.get('net_margin'),
+                    'total_assets': (fin.get('total_assets') / 1e8) if fin.get('total_assets') else None,
+                    'report_date': fin.get('report_date'),
+                    '_source': 'mysql',
+                }
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+    # ── 备用：东方财富API ──
     try:
         secid = get_secid(code)
         

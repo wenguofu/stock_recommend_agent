@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
 """RF调参 — 内存优化版: 预加载80只股票, 3轮调参, 最后1000股验证"""
-import sys, os, json, random, sqlite3, time, gc
+import sys, os, json, random, time, gc
 from datetime import datetime
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 
 sys.path.insert(0, os.path.dirname(__file__))
-DB = os.path.join(os.path.dirname(__file__), 'database.db')
+from models import SessionLocal
 
 def preload_stocks(codes):
     """一次性加载所有股票数据到内存"""
-    conn = sqlite3.connect(DB)
-    data = {}
-    for code in codes:
-        df = pd.read_sql_query(
-            "SELECT date,open,high,low,close,volume FROM backtest_data WHERE code=? ORDER BY date",
-            conn, params=(code,))
-        if len(df) < 80: continue
-        for c in ['close','high','low','open','volume']:
-            df[c] = df[c].astype(float)
-        data[code] = df
-    conn.close()
-    return data
+    db = SessionLocal()
+    try:
+        data = {}
+        for code in codes:
+            df = pd.read_sql_query(
+                "SELECT date,open,high,low,close,volume FROM backtest_data WHERE code=:code ORDER BY date",
+                db.bind, params={'code': code})
+            if len(df) < 80: continue
+            for c in ['close','high','low','open','volume']:
+                df[c] = df[c].astype(float)
+            data[code] = df
+        return data
+    finally:
+        db.close()
 
 def build_XY_from_arrays(c, h, l, o, v):
     """从numpy数组构建特征 — 纯numpy, 比pandas快10x"""

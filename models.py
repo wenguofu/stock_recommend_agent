@@ -3,12 +3,112 @@
 """数据库模型定义"""
 
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, Text, DateTime, Float
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import event
 from datetime import datetime
 import os
 
+# 自动加载 .env 文件
+try:
+    from dotenv import load_dotenv
+    _env_path = os.path.join(os.path.dirname(__file__), '.env')
+    load_dotenv(_env_path)
+except ImportError:
+    pass
+
 Base = declarative_base()
+
+# ═══════════════════════════════════════════════════════════════
+# 数据库引擎工厂 — 通过 DATABASE_URL 环境变量切换 SQLite / MySQL
+# ═══════════════════════════════════════════════════════════════
+
+def get_database_url():
+    """获取数据库连接 URL，优先从环境变量读取"""
+    env_url = os.environ.get("DATABASE_URL", "")
+    if env_url:
+        return env_url
+    # 默认 SQLite（向后兼容）
+    db_path = os.path.join(os.path.dirname(__file__), 'database.db')
+    return f'sqlite:///{db_path}'
+
+
+def get_engine(database_url=None):
+    """创建 SQLAlchemy 引擎
+
+    Args:
+        database_url: 数据库连接 URL，为 None 时自动从环境变量/默认值获取
+
+    Returns:
+        sqlalchemy.engine.Engine
+    """
+    url = database_url or get_database_url()
+    is_mysql = url.startswith("mysql")
+
+    if is_mysql:
+        engine = create_engine(
+            url,
+            echo=False,
+            pool_size=10,
+            max_overflow=20,
+            pool_pre_ping=True,
+            pool_recycle=3600,  # MySQL 默认 8h wait_timeout，一小时回收避免断开
+        )
+    else:
+        # SQLite 配置（向后兼容）
+        engine = create_engine(
+            url,
+            echo=False,
+            connect_args={
+                'check_same_thread': False,
+                'timeout': 15,
+            },
+            pool_size=5,
+            max_overflow=10,
+            pool_pre_ping=True,
+            pool_recycle=300,
+        )
+
+        # 启用 WAL 模式 — 支持并发读写
+        @event.listens_for(engine, 'connect')
+        def _set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute('PRAGMA journal_mode=WAL')
+            cursor.execute('PRAGMA synchronous=NORMAL')
+            cursor.execute('PRAGMA busy_timeout=15000')
+            cursor.execute('PRAGMA foreign_keys=ON')
+            cursor.close()
+
+    return engine
+
+
+# 全局引擎和会话工厂
+engine = get_engine()
+SessionLocal = sessionmaker(bind=engine)
+
+
+def reset_engine(database_url=None):
+    """重新初始化引擎和会话工厂（用于运行时切换数据库）
+
+    Args:
+        database_url: 新的数据库连接 URL
+    """
+    global engine, SessionLocal
+    old_engine = engine
+    engine = get_engine(database_url)
+    SessionLocal = sessionmaker(bind=engine)
+    # 关闭旧引擎的所有连接
+    old_engine.dispose()
+
+
+def get_db():
+    """获取数据库会话"""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 class Watchlist(Base):
     """自选股表"""
@@ -47,16 +147,12 @@ class Agent(Base):
 class AnalysisCache(Base):
     """分析结果缓存表"""
     __tablename__ = 'analysis_cache'
-    
+
     id = Column(Integer, primary_key=True, autoincrement=True)
     code = Column(String(6), nullable=False, index=True)
     analysis_type = Column(String(20), nullable=False)  # 'intraday_t', 'review', 'comprehensive'
     data = Column(Text)  # JSON格式
     created_at = Column(DateTime, default=datetime.now)
-    
-    __table_args__ = (
-        {'sqlite_autoincrement': True},
-    )
 
 class Strategy(Base):
     """策略预设表"""
@@ -75,17 +171,17 @@ class Strategy(Base):
 class DebateJob(Base):
     """多Agent辩论任务表"""
     __tablename__ = 'debate_jobs'
-    
+
     id = Column(Integer, primary_key=True, autoincrement=True)
     job_id = Column(String(64), unique=True, nullable=False, index=True)
-    code = Column(String(6), nullable=False, index=True)
-    name = Column(String(100), nullable=False)
+    code = Column(String(500), nullable=False)  # 单股代码或多股逗号分隔列表(最长~202字符)
+    name = Column(Text, nullable=False)  # 任务名称，多股时可能很长
     status = Column(String(20), default='queued')  # queued/running/completed/failed/canceled
     progress = Column(Integer, default=0)
     agent_ids = Column(Text)  # JSON
-    steps = Column(Text)  # JSON
+    steps = Column(Text(length=16777215))  # MEDIUMTEXT: 可能有 ~300KB 的大数据
     progress_detail = Column(Text)  # JSON: [{phase, agent_name, round, detail}]
-    report_md = Column(Text)
+    report_md = Column(Text(length=16777215))  # MEDIUMTEXT: 分析报告可能很大
     error = Column(Text)
     canceled = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.now)
@@ -290,7 +386,7 @@ class TaskLog(Base):
 class Recommendation(Base):
     """推荐结果表"""
     __tablename__ = 'recommendations'
-    
+
     id = Column(Integer, primary_key=True, autoincrement=True)
     rec_type = Column(String(10), nullable=False)  # 'daily'/'strategy'
     strategy = Column(String(20), nullable=False)
@@ -301,7 +397,7 @@ class Recommendation(Base):
     turnover = Column(Float)
     score = Column(Float)
     reason = Column(Text)
-    rank = Column(Integer)
+    rank = Column('rank', Integer)  # 'rank' 是 MySQL 保留字，需要显式指定列名
     created_at = Column(DateTime, default=datetime.now)
 
 
@@ -399,41 +495,7 @@ class MarketAlertLog(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 
-# 数据库初始化
-DB_PATH = os.path.join(os.path.dirname(__file__), 'database.db')
-
-engine = create_engine(
-    f'sqlite:///{DB_PATH}',
-    echo=False,
-    connect_args={
-        'check_same_thread': False,
-        'timeout': 15,  # busy timeout: wait up to 15s for lock release
-    },
-    pool_size=5,
-    max_overflow=10,
-    pool_pre_ping=True,
-    pool_recycle=300,
-)
-
-# 启用 WAL 模式 — 支持并发读写, 避免 "database is locked"
-from sqlalchemy import event
-@event.listens_for(engine, 'connect')
-def _set_sqlite_pragma(dbapi_connection, connection_record):
-    """连接建立时设置 SQLite pragma"""
-    cursor = dbapi_connection.cursor()
-    cursor.execute('PRAGMA journal_mode=WAL')
-    cursor.execute('PRAGMA synchronous=NORMAL')
-    cursor.execute('PRAGMA busy_timeout=15000')
-    cursor.execute('PRAGMA foreign_keys=ON')
-    cursor.close()
-
+# ═══════════════════════════════════════════════════════════════
+# 初始化：创建所有表
+# ═══════════════════════════════════════════════════════════════
 Base.metadata.create_all(engine)
-SessionLocal = sessionmaker(bind=engine)
-
-def get_db():
-    """获取数据库会话"""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()

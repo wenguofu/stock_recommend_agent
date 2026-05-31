@@ -17,42 +17,48 @@
   - 每次等额交易 (1单位资金)
 """
 
-import sys, os, json, math, random, sqlite3
+import sys, os, json, math, random
 from datetime import datetime
 from collections import defaultdict
 import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(__file__))
-DB_PATH = os.path.join(os.path.dirname(__file__), 'database.db')
+from models import SessionLocal
+from sqlalchemy import text
 
 # ══════════════════════════════════════════════════════
 # 基本面: 复用 validate_ml_risk 的工具函数
 # ══════════════════════════════════════════════════════
 
 def get_stock_codes(n=1000, min_days=250):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT code, COUNT(*) as cnt FROM backtest_data GROUP BY code HAVING cnt >= ? ORDER BY cnt DESC", (min_days,))
-    rows = cursor.fetchall()
-    conn.close()
-    codes = [r[0] for r in rows]
-    if len(codes) > n:
-        random.seed(42)
-        codes = random.sample(codes, n)
-    return codes
+    db = SessionLocal()
+    try:
+        rows = db.execute(
+            text("SELECT code, COUNT(*) as cnt FROM backtest_data GROUP BY code HAVING cnt >= :min_d ORDER BY cnt DESC"),
+            {'min_d': min_days}
+        ).fetchall()
+        codes = [r[0] for r in rows]
+        if len(codes) > n:
+            random.seed(42)
+            codes = random.sample(codes, n)
+        return codes
+    finally:
+        db.close()
 
 
 def load_stock_data(code):
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query(
-        "SELECT date, open, high, low, close, volume, turnover FROM backtest_data WHERE code=? ORDER BY date",
-        conn, params=(code,))
-    conn.close()
-    if len(df) < 80: return None
-    for col in ['close','high','low','open','volume']:
-        df[col] = df[col].astype(float)
-    return df
+    db = SessionLocal()
+    try:
+        df = pd.read_sql_query(
+            "SELECT date, open, high, low, close, volume, turnover FROM backtest_data WHERE code=:code ORDER BY date",
+            db.bind, params={'code': code})
+        if len(df) < 80: return None
+        for col in ['close','high','low','open','volume']:
+            df[col] = df[col].astype(float)
+        return df
+    finally:
+        db.close()
 
 
 def compute_features(df, idx):

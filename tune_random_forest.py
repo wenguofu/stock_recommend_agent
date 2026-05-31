@@ -6,32 +6,43 @@
 方法: 逐股票扩展窗口训练, 网格搜索最优参数
 """
 
-import sys, os, json, math, random, time, sqlite3
+import sys, os, json, math, random, time
 from datetime import datetime
 import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(__file__))
-DB_PATH = os.path.join(os.path.dirname(__file__), 'database.db')
+from models import SessionLocal
+from sqlalchemy import text
 
 def get_codes(n=1000, min_days=250):
-    conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute("SELECT code FROM backtest_data GROUP BY code HAVING COUNT(*)>=? ORDER BY COUNT(*) DESC", (min_days,)).fetchall()
-    conn.close()
-    codes = [r[0] for r in rows]
-    if len(codes) > n:
-        random.seed(42)
-        codes = random.sample(codes, n)
-    return codes
+    db = SessionLocal()
+    try:
+        rows = db.execute(
+            text("SELECT code FROM backtest_data GROUP BY code HAVING COUNT(*)>=:min_d ORDER BY COUNT(*) DESC"),
+            {'min_d': min_days}
+        ).fetchall()
+        codes = [r[0] for r in rows]
+        if len(codes) > n:
+            random.seed(42)
+            codes = random.sample(codes, n)
+        return codes
+    finally:
+        db.close()
 
 def load_df(code):
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("SELECT date,open,high,low,close,volume,turnover FROM backtest_data WHERE code=? ORDER BY date", conn, params=(code,))
-    conn.close()
-    if len(df) < 80: return None
-    for c in ['close','high','low','open','volume']:
-        df[c] = df[c].astype(float)
-    return df
+    db = SessionLocal()
+    try:
+        df = pd.read_sql_query(
+            "SELECT date,open,high,low,close,volume,turnover FROM backtest_data WHERE code=:code ORDER BY date",
+            db.bind, params={'code': code}
+        )
+        if len(df) < 80: return None
+        for c in ['close','high','low','open','volume']:
+            df[c] = df[c].astype(float)
+        return df
+    finally:
+        db.close()
 
 def build_features_labels(df):
     """从DataFrame构建特征矩阵X和标签y (5日方向)"""
