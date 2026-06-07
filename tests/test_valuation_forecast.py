@@ -108,6 +108,41 @@ class TestGetInstitutionalForecast:
         assert result['analyst_count'] == 12
         assert result['rating_label'] == '强烈推荐'
 
+    def test_with_datetime_updated_at(self, fresh_quant_valuation):
+        """回归测试: updated_at 为 datetime 对象时不应崩溃 (信维通信 300136 真实数据)
+
+        Bug: 'datetime.datetime' object has no attribute 'strip'
+        """
+        import datetime
+        mock_row = MagicMock()
+        mock_row._mapping = {
+            'net_profit_2025a': '7.09亿',
+            'net_profit_2026e': '10.69亿',
+            'net_profit_2027e': '14.70亿',
+            'net_profit_2028e': '26.96亿',
+            'eps_2025a': '0.73',
+            'eps_2026e': '1.11',
+            'eps_2027e': '1.52',
+            'eps_2028e': '2.79',
+            'rating_label': '买入',
+            'analyst_count': '8',
+            'updated_at': datetime.datetime(2026, 6, 1, 23, 2, 48),  # 真实: datetime 对象
+        }
+        mock_models = MagicMock()
+        mock_models.get_db.return_value.__next__.return_value.execute.return_value.fetchone.return_value = mock_row
+        with patch.dict(sys.modules, {'models': mock_models}):
+            result = fresh_quant_valuation.get_institutional_forecast('300136')
+
+        assert result is not None
+        assert result['has_data'] is True
+        assert result['net_profit_2025a'] == 7.09
+        assert result['net_profit_2026e'] == 10.69
+        # updated_at 必须是字符串 (前端展示)
+        assert isinstance(result['updated_at'], str)
+        assert '2026-06-01' in result['updated_at']
+        assert result['analyst_count'] == 8
+        assert result['rating_label'] == '买入'
+
 
 # ── auto_fill_institutional_forecast ──────────────────────
 

@@ -368,6 +368,12 @@ def get_institutional_forecast(code: str) -> Optional[Dict]:
             eps_27 = _parse_yi_value(d.get('eps_2027e'))
             analyst_count = _safe_int(d.get('analyst_count'))
             has_data = (np_25 > 0 and np_26 > 0) or eps_26 > 0
+            # updated_at 可能是 datetime 或字符串, 统一转为 ISO 字符串
+            updated_at_raw = d.get('updated_at')
+            if hasattr(updated_at_raw, 'isoformat'):
+                updated_at_str = updated_at_raw.isoformat()
+            else:
+                updated_at_str = str(updated_at_raw or '').strip()
             return {
                 'net_profit_2025a': np_25,
                 'net_profit_2026e': np_26,
@@ -375,8 +381,8 @@ def get_institutional_forecast(code: str) -> Optional[Dict]:
                 'eps_2026e': eps_26,
                 'eps_2027e': eps_27,
                 'analyst_count': analyst_count,
-                'rating_label': (d.get('rating_label') or '').strip(),
-                'updated_at': (d.get('updated_at') or '').strip(),
+                'rating_label': str(d.get('rating_label') or '').strip(),
+                'updated_at': updated_at_str,
                 'has_data': has_data,
             }
         finally:
