@@ -631,3 +631,168 @@ class TestSprint7EndToEnd:
         result = fresh_quant_valuation.calculate_valuation(inp)
         # 关键断言: 暴跌后应该是"强烈推荐" (评分 >= 75)
         assert result.composite_score >= 75, f"5/18 暴跌后评分应 >= 75, 实际 {result.composite_score}"
+
+
+class TestSprint7P1Momentum:
+    """Sprint 7 P1.2: calculate_momentum_adjustment 单元测试"""
+
+    def _make_kline(self, closes):
+        """生成 K 线测试数据 (近 30 个交易日)"""
+        return [{'day': f'2026-05-{15 - i:02d}', 'open': str(c), 'high': str(c),
+                 'low': str(c), 'close': str(c), 'volume': '1000000'}
+                for i, c in enumerate(closes)]
+
+    def test_strong_uptrend_returns_positive(self, fresh_quant_valuation):
+        """5d +15%, 20d +25% → 强上涨趋势 → 应返回正分"""
+        closes = [100] * 20 + [105, 110, 115, 120, 125]  # 最后 5 天每天 +5%
+        kline = self._make_kline(closes)
+        adj = fresh_quant_valuation.calculate_momentum_adjustment('test', kline)
+        assert adj > 0, f"强上涨应得正分, 实际 {adj}"
+
+    def test_strong_downtrend_returns_negative(self, fresh_quant_valuation):
+        """5d -15%, 20d -25% → 强下跌 → 应返回负分"""
+        # 25 天, 早 20 天从 100 涨到 125, 然后 5 天跌回 100
+        closes = [100, 105, 110, 115, 120, 125] + [125] * 14 + [120, 115, 110, 105, 100]
+        kline = self._make_kline(closes)
+        adj = fresh_quant_valuation.calculate_momentum_adjustment('test', kline)
+        assert adj < 0, f"强下跌应得负分, 实际 {adj}"
+
+    def test_sideways_returns_zero(self, fresh_quant_valuation):
+        """横盘 → 应接近 0"""
+        closes = [100] * 25
+        kline = self._make_kline(closes)
+        adj = fresh_quant_valuation.calculate_momentum_adjustment('test', kline)
+        assert -1 <= adj <= 1, f"横盘应得 0 分, 实际 {adj}"
+
+    def test_crash_then_rebound_bonus(self, fresh_quant_valuation):
+        """暴跌反弹 (近 10 日单日 < -10%, 5 日累计 > +5%) → 应大 + 分"""
+        # 30 天: 前 24 天平稳 100, 第 25 天暴跌到 80 (-20%), 然后 5 天反弹到 95 (+18.75%)
+        closes = [100] * 24 + [80, 85, 88, 92, 95, 98]
+        kline = self._make_kline(closes)
+        adj = fresh_quant_valuation.calculate_momentum_adjustment('test', kline)
+        assert adj >= 6, f"暴跌反弹应得大加分 (>=6), 实际 {adj}"
+
+    def test_clamped_to_range(self, fresh_quant_valuation):
+        """极值应被截断在 [-10, +10] 范围内"""
+        closes = [100] + [200] * 25  # 5d +100%
+        kline = self._make_kline(closes)
+        adj = fresh_quant_valuation.calculate_momentum_adjustment('test', kline)
+        assert -10 <= adj <= 10, f"动量分应截断在 [-10, 10], 实际 {adj}"
+
+    def test_insufficient_data_returns_zero(self, fresh_quant_valuation):
+        """数据不足 (< 5 天) → 应返回 0"""
+        kline = self._make_kline([100, 101, 102])
+        adj = fresh_quant_valuation.calculate_momentum_adjustment('test', kline)
+        assert adj == 0.0
+
+
+class TestSprint7P2RelativeStrength:
+    """Sprint 7 P2: calculate_relative_strength_adjustment 单元测试"""
+
+    def test_strong_outperformer(self, fresh_quant_valuation):
+        """个股 5d +15%, 大盘 +0% → 跑赢 +15% → 强势加分"""
+        # mock _fetch_kline_data: code 'XXX' → 个股强, 'sh000300' → 大盘平
+        from unittest.mock import patch
+
+        def fake_kline(code, days=30):
+            if code == 'sh000300':
+                closes = [4000] * 25  # 大盘平
+            else:
+                closes = [100] * 20 + [110, 115]  # 个股 +15%
+            return [{'day': f'd{i}', 'open': str(c), 'high': str(c),
+                     'low': str(c), 'close': str(c), 'volume': '0'} for i, c in enumerate(closes)]
+
+        with patch.object(fresh_quant_valuation, '_fetch_kline_data', side_effect=fake_kline):
+            adj = fresh_quant_valuation.calculate_relative_strength_adjustment('300308')
+        assert adj >= 4, f"跑赢 +15% 应得 >= 4, 实际 {adj}"
+
+    def test_weak_underperformer(self, fresh_quant_valuation):
+        """个股 5d -10%, 大盘 +0% → 跑输 -10% → 弱势减分"""
+        from unittest.mock import patch
+
+        def fake_kline(code, days=30):
+            if code == 'sh000300':
+                closes = [4000] * 25
+            else:
+                closes = [100] * 20 + [95, 90]  # 个股 -10%
+            return [{'day': f'd{i}', 'open': str(c), 'high': str(c),
+                     'low': str(c), 'close': str(c), 'volume': '0'} for i, c in enumerate(closes)]
+
+        with patch.object(fresh_quant_valuation, '_fetch_kline_data', side_effect=fake_kline):
+            adj = fresh_quant_valuation.calculate_relative_strength_adjustment('300308')
+        assert adj <= -1, f"跑输 -10% 应得 <= -1, 实际 {adj}"
+
+    def test_neutral_market_match(self, fresh_quant_valuation):
+        """个股和大盘涨幅一致 → 应接近 0"""
+        from unittest.mock import patch
+
+        def fake_kline(code, days=30):
+            closes = [100] * 20 + [105, 110]  # 都涨 10%
+            return [{'day': f'd{i}', 'open': str(c), 'high': str(c),
+                     'low': str(c), 'close': str(c), 'volume': '0'} for i, c in enumerate(closes)]
+
+        with patch.object(fresh_quant_valuation, '_fetch_kline_data', side_effect=fake_kline):
+            adj = fresh_quant_valuation.calculate_relative_strength_adjustment('300308')
+        assert -1 <= adj <= 1, f"同步涨跌应得 0, 实际 {adj}"
+
+    def test_market_data_unavailable_returns_zero(self, fresh_quant_valuation):
+        """大盘数据拉不到 → 应返回 0 (不阻塞主流程)"""
+        from unittest.mock import patch
+
+        def fake_kline(code, days=30):
+            if code in ('sh000300', 'sz399300'):
+                return []  # 大盘拉不到
+            return [{'day': 'd', 'open': '1', 'high': '1', 'low': '1', 'close': '1', 'volume': '0'}] * 25
+
+        with patch.object(fresh_quant_valuation, '_fetch_kline_data', side_effect=fake_kline):
+            adj = fresh_quant_valuation.calculate_relative_strength_adjustment('300308')
+        assert adj == 0.0
+
+    def test_clamped_to_range(self, fresh_quant_valuation):
+        """RS 调整分应截断在 [-5, +5]"""
+        from unittest.mock import patch
+
+        def fake_kline(code, days=30):
+            if code == 'sh000300':
+                closes = [1000] * 25  # 大盘平
+            else:
+                closes = [100] + [200] * 24  # 个股翻倍
+            return [{'day': f'd{i}', 'open': str(c), 'high': str(c),
+                     'low': str(c), 'close': str(c), 'volume': '0'} for i, c in enumerate(closes)]
+
+        with patch.object(fresh_quant_valuation, '_fetch_kline_data', side_effect=fake_kline):
+            adj = fresh_quant_valuation.calculate_relative_strength_adjustment('300308')
+        assert -5 <= adj <= 5, f"RS 应截断在 [-5, 5], 实际 {adj}"
+
+
+class TestSprint7P1P2Integration:
+    """Sprint 7 P1+P2 集成: 验证 calculate_valuation 接收 momentum_adjustment 后的打分变化"""
+
+    def test_positive_momentum_lifts_score(self, fresh_quant_valuation):
+        """正向动量调整 → 评分应增加"""
+        base_inp = fresh_quant_valuation.ValuationInput(
+            code='300308', current_price=1000, eps_ttm=15, pe_ttm=66, roe=25,
+            revenue_yoy=80, profit_yoy=120, sector_name='光模块',
+            industry_growth_6m=100, industry_growth_1y=80,
+        )
+        base = fresh_quant_valuation.calculate_valuation(base_inp, momentum_adjustment=0)
+        boosted = fresh_quant_valuation.calculate_valuation(base_inp, momentum_adjustment=8)
+        assert boosted.composite_score > base.composite_score, \
+            f"动量 +8 应提分: 基准={base.composite_score} 提升后={boosted.composite_score}"
+
+    def test_negative_momentum_caps_score_drop(self, fresh_quant_valuation):
+        """负向动量调整 → 评分应下降 (但被截断在 -5)"""
+        base_inp = fresh_quant_valuation.ValuationInput(
+            code='300308', current_price=1000, eps_ttm=15, pe_ttm=66, roe=25,
+            revenue_yoy=80, profit_yoy=120, sector_name='光模块',
+            industry_growth_6m=100, industry_growth_1y=80,
+        )
+        base = fresh_quant_valuation.calculate_valuation(base_inp, momentum_adjustment=0)
+        negative = fresh_quant_valuation.calculate_valuation(base_inp, momentum_adjustment=-5)
+        assert negative.composite_score < base.composite_score, \
+            f"动量 -5 应降分: 基准={base.composite_score} 降低后={negative.composite_score}"
+        # 截断验证: 给 -20 也只能减 5 分
+        extreme = fresh_quant_valuation.calculate_valuation(base_inp, momentum_adjustment=-20)
+        assert extreme.composite_score == negative.composite_score, \
+            f"动量截断应限制在 -5: -20 实际效果={extreme.composite_score}, 期望={negative.composite_score}"
+

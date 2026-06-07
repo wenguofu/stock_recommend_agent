@@ -98,7 +98,7 @@ def _safe_float(v, default=0.0):
         return default
 
 
-# ── 成长股分类 (Sprint 7 P0) ──────────────────────────────
+# ── 成长股分类 (Sprint 7 P0 + P1.1 扩展) ──────────────────────────────
 # 行业关键词: 命中 → 倾向 growth
 GROWTH_SECTOR_KEYWORDS = [
     "AI", "人工智能", "光模块", "光通信", "CPO", "光器件",
@@ -113,7 +113,55 @@ GROWTH_SECTOR_KEYWORDS = [
     "固态电池",
     "量子",
     "AR", "VR", "XR", "折叠屏",
+    # 消费电子/智能终端 (蓝思/立讯/歌尔/欧菲光/长盈精密)
+    "消费电子", "果链", "苹果概念", "华为概念", "小米概念",
+    "玻璃盖板", "玻璃外壳", "陶瓷外观", "结构件", "连接器", "声学",
+    "摄像头", "镜头", "CIS", "光学元件", "指纹识别", "Face ID",
+    "智能穿戴", "TWS", "智能手表", "AI眼镜", "智能耳机",
+    "PCB", "FPC", "软板", "硬板", "IC载板",
+    "封装", "封测", "测试设备",
+    "代工", "ODM", "OEM",
+    # 生物医药/医疗器械
+    "CRO", "CDMO", "原料药", "仿制药", "化学药", "中药",
+    "体外诊断", "IVD", "基因测序", "精准医疗", "细胞治疗",
+    "医美", "口腔医疗", "眼科医疗", "辅助生殖",
+    "医疗器械", "医疗设备", "高值耗材", "低值耗材",
+    # 新能源车产业链
+    "锂电材料", "正极材料", "负极材料", "电解液", "隔膜", "锂电设备",
+    "电池", "动力电池", "储能电池", "BMS",
+    "电控", "电机", "热管理", "轻量化", "一体化压铸",
+    "充电桩", "换电站", "充电桩",
+    "汽车电子", "智能座舱", "HUD", "激光雷达", "毫米波雷达",
+    "车联网", "V2X",
+    # 工业母机/机器人
+    "工业母机", "数控机床", "CNC", "刀具",
+    "工业机器人", "协作机器人", "服务机器人", "扫地机器人",
+    "机器狗", "四足机器人",
+    # 通信
+    "5G", "6G", "通信设备", "光通信", "光器件", "光模块", "CPO",
+    "光芯片", "光器件", "连接器",
+    "卫星互联网", "北斗", "导航",
+    "运营商", "通信服务",
+    # 半导体
+    "晶圆", "晶圆厂", "代工", "设备", "光刻机", "刻蚀机", "薄膜沉积",
+    "EDA", "IP授权", "IC设计", "模拟芯片", "射频", "电源管理",
+    "存储芯片", "DRAM", "NAND", "NOR", "MCU", "SoC",
+    "传感器", "MEMS", "CIS", "图像传感器",
+    # 军工
+    "军工", "航空装备", "航天装备", "船舶装备", "兵器装备",
+    "军用通信", "雷达", "导弹", "无人机军用",
+    # 传媒/游戏
+    "游戏", "影视", "动漫", "出版", "教育",
+    "MCN", "直播", "短视频", "网红",
+    # 软件/互联网
+    "SaaS", "PaaS", "IaaS", "云服务", "云计算",
+    "网络安全", "信息安全", "数据安全",
+    "操作系统", "数据库", "中间件",
+    "金融IT", "医疗IT", "政务IT",
+    "人工智能", "大模型", "算力", "AIGC", "AI应用",
 ]
+# 去重 (保留顺序)
+GROWTH_SECTOR_KEYWORDS = list(dict.fromkeys(GROWTH_SECTOR_KEYWORDS))
 
 # 行业关键词: 命中 → 倾向 cyclical
 CYCLICAL_SECTOR_KEYWORDS = [
@@ -860,6 +908,200 @@ def auto_fill_from_db(inp: ValuationInput) -> ValuationInput:
     return inp
 
 
+def calculate_momentum_adjustment(code: str, kline_data: list = None) -> float:
+    """
+    Sprint 7 P1.2: 自动计算动量调整分 (-10 ~ +10)
+
+    基于近 N 日价格动量 + 暴跌反弹识别:
+      - 5 日涨跌幅: 短期趋势
+      - 20 日涨跌幅: 中期趋势
+      - 暴跌反弹: 近 10 日内单日跌幅 > 10% → 反弹机会加分
+
+    评分逻辑 (整体 -10 ~ +10, 评分卡会截断为 -5 ~ +5):
+      + 持续上涨趋势 (5日 +10% ~ +20%, 20日 > 0)
+      ++ 突破加速 (5日 > +20%, 20日 > +30%)
+      +  温和上涨 (5日 +5% ~ +10%)
+      0  横盘
+      -  温和下跌
+      -- 持续下跌 (5日 -10% ~ -20%)
+      +++ 暴跌反弹 (近 10 日内有单日 < -10%, 但 5 日累计 > +5%)
+    """
+    try:
+        if kline_data is None:
+            # 拉 K 线 (默认 30 天, 够用)
+            kline_data = _fetch_kline_data(code, days=30)
+
+        if not kline_data or len(kline_data) < 5:
+            return 0.0
+
+        # 计算各周期涨跌幅 (5d 涨幅 = 5 个交易日前到今天)
+        closes = [float(d['close']) for d in kline_data]
+        latest = closes[-1]
+        # 5 日前: 索引 -6 (如果数据足够)
+        d5_ago = closes[-6] if len(closes) >= 6 else closes[0]
+        # 20 日前: 索引 -21
+        d20_ago = closes[-21] if len(closes) >= 21 else closes[0]
+        # 10 日前: 索引 -11
+        d10_ago = closes[-11] if len(closes) >= 11 else closes[0]
+
+        change_5d = (latest - d5_ago) / d5_ago * 100 if d5_ago > 0 else 0
+        change_20d = (latest - d20_ago) / d20_ago * 100 if d20_ago > 0 else 0
+        change_10d = (latest - d10_ago) / d10_ago * 100 if d10_ago > 0 else 0
+
+        # 单日最大跌幅 (近 10 日内)
+        max_daily_drop = 0
+        max_daily_drop_idx = -1
+        for i in range(-1, -11, -1):
+            if abs(i) - 1 < len(closes) and abs(i) <= len(closes):
+                prev_idx = i - 1
+                if abs(prev_idx) <= len(closes):
+                    day_chg = (closes[i] - closes[prev_idx]) / closes[prev_idx] * 100
+                    if day_chg < max_daily_drop:
+                        max_daily_drop = day_chg
+                        max_daily_drop_idx = i
+
+        # 评分
+        score = 0.0
+
+        # 暴跌反弹 (近 10 日有单日 < -10%, 且 5 日累计 > +5%)
+        if max_daily_drop < -10 and change_5d > 5:
+            # 暴跌后反弹 = 买入机会
+            score += 6
+        elif max_daily_drop < -15 and change_5d > 0:
+            score += 4
+        elif max_daily_drop < -10 and change_5d > 0:
+            score += 2
+
+        # 5 日动量 (主要短期指标)
+        if change_5d > 20:
+            score += 5  # 加速上涨
+        elif change_5d > 10:
+            score += 3
+        elif change_5d > 5:
+            score += 1
+        elif change_5d < -20:
+            score -= 5  # 加速下跌
+        elif change_5d < -10:
+            score -= 3
+        elif change_5d < -5:
+            score -= 1
+
+        # 20 日动量 (中期趋势, 弱化)
+        if change_20d > 30:
+            score += 3
+        elif change_20d > 15:
+            score += 1
+        elif change_20d < -30:
+            score -= 3
+        elif change_20d < -15:
+            score -= 1
+
+        return max(-10.0, min(10.0, score))
+    except Exception as e:
+        logger.debug(f"calculate_momentum_adjustment({code}) failed: {e}")
+        return 0.0
+
+
+def _fetch_kline_data(code: str, days: int = 30) -> list:
+    """
+    拉 K 线数据 (Sprint 7 P1.2)
+    优先从 Sina (无需 token), fallback 腾讯
+    支持沪深300 (sh000300) 等指数
+    """
+    import urllib.request, json
+    # 已带 sh/sz 前缀则直接用; 否则按首位数字推断
+    if code.startswith(("sh", "sz")):
+        sym = code
+    elif len(code) == 6:
+        prefix = "sh" if code.startswith('6') else "sz"
+        sym = f"{prefix}{code}"
+    else:
+        sym = f"sh{code}"
+    try:
+        url = f"http://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={sym}&scale=240&ma=no&datalen={days}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'http://finance.sina.com.cn'})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode('gbk'))
+        if isinstance(data, list) and len(data) > 0:
+            return data
+    except Exception as e:
+        logger.debug(f"_fetch_kline_data({code}) sina failed: {e}")
+    return []
+
+
+def calculate_relative_strength_adjustment(code: str) -> float:
+    """
+    Sprint 7 P2: 相对市场强度 (RS) 调整 (-5 ~ +5)
+
+    个股 5日/20日 涨幅 vs 沪深300 同期涨幅:
+      - 跑赢 > +5% → 加分 (强势股)
+      - 跑输 < -5% → 减分 (弱势股)
+      - 持平 → 0
+    """
+    try:
+        # 拉个股 K 线
+        stock_kline = _fetch_kline_data(code, days=30)
+        if not stock_kline or len(stock_kline) < 6:
+            return 0.0
+
+        # 拉沪深300 K 线
+        # sh000300 / sz399300 都可以
+        market_kline = _fetch_kline_data('sh000300', days=30)
+        if not market_kline or len(market_kline) < 6:
+            market_kline = _fetch_kline_data('sz399300', days=30)
+        if not market_kline or len(market_kline) < 6:
+            return 0.0
+
+        # 对齐数据 (取较短的)
+        n = min(len(stock_kline), len(market_kline))
+
+        stock_close = float(stock_kline[-1]['close'])
+        stock_5d_ago = float(stock_kline[-6]['close']) if n >= 6 else float(stock_kline[0]['close'])
+        stock_20d_ago = float(stock_kline[-21]['close']) if n >= 21 else float(stock_kline[0]['close'])
+
+        market_close = float(market_kline[-1]['close'])
+        market_5d_ago = float(market_kline[-6]['close']) if n >= 6 else float(market_kline[0]['close'])
+        market_20d_ago = float(market_kline[-21]['close']) if n >= 21 else float(market_kline[0]['close'])
+
+        stock_5d_chg = (stock_close - stock_5d_ago) / stock_5d_ago * 100
+        market_5d_chg = (market_close - market_5d_ago) / market_5d_ago * 100
+        stock_20d_chg = (stock_close - stock_20d_ago) / stock_20d_ago * 100
+        market_20d_chg = (market_close - market_20d_ago) / market_20d_ago * 100
+
+        rs_5d = stock_5d_chg - market_5d_chg
+        rs_20d = stock_20d_chg - market_20d_chg
+
+        # 评分 (5d 为主, 20d 为辅)
+        score = 0.0
+        if rs_5d > 15:
+            score += 5
+        elif rs_5d > 8:
+            score += 3
+        elif rs_5d > 3:
+            score += 1
+        elif rs_5d < -15:
+            score -= 5
+        elif rs_5d < -8:
+            score -= 3
+        elif rs_5d < -3:
+            score -= 1
+
+        # 20d 调整
+        if rs_20d > 20:
+            score += 2
+        elif rs_20d > 10:
+            score += 1
+        elif rs_20d < -20:
+            score -= 2
+        elif rs_20d < -10:
+            score -= 1
+
+        return max(-5.0, min(5.0, score))
+    except Exception as e:
+        logger.debug(f"calculate_relative_strength_adjustment({code}) failed: {e}")
+        return 0.0
+
+
 def quick_valuation(code: str, industry_growth_1y: float = 0,
                     industry_growth_6m: float = 0,
                     sector_name: str = "") -> Dict:
@@ -889,7 +1131,24 @@ def quick_valuation(code: str, industry_growth_1y: float = 0,
     except Exception:
         pass
 
-    result = calculate_valuation(inp)
+    # Sprint 7 P1.2: 自动计算动量调整分 (5d/20d 趋势)
+    momentum_adj = calculate_momentum_adjustment(code)
+    # Sprint 7 P2: 相对市场强度 (个股 vs 沪深300)
+    rs_adj = calculate_relative_strength_adjustment(code)
+    # 合并: 动量占 70%, RS 占 30%, 整体截断为 -10 ~ +10 (评分卡内再截断为 -5 ~ +5)
+    combined_momentum = momentum_adj * 0.7 + rs_adj * 0.3 * 2  # RS 范围 -5~+5, 调整到 -10~+10 区间
+    combined_momentum = max(-10.0, min(10.0, combined_momentum))
+    # 把动量数据存到 detail
+    inp_detail_momentum = {
+        'momentum_adjustment': round(combined_momentum, 1),
+        'momentum_raw': round(momentum_adj, 1),
+        'relative_strength': round(rs_adj, 1),
+        'momentum_source': 'auto_5d_20d + hs300',
+    }
+
+    result = calculate_valuation(inp, momentum_adjustment=combined_momentum)
+    # 合并动量 detail
+    result.detail.update(inp_detail_momentum)
 
     return {
         'code': code,
