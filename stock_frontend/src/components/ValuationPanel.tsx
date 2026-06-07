@@ -184,12 +184,18 @@ export default function ValuationPanel({ stockCode }: { stockCode?: string }) {
               {useForecast && growth6m != null && (
                 <Tag color="blue" style={{ marginLeft: 4, fontSize: 10 }}>自动</Tag>
               )}
+              {hasForecast && forceManual && (
+                <Tag color="orange" style={{ marginLeft: 4, fontSize: 10 }}>手动</Tag>
+              )}
             </Text>
             <InputNumber
-              value={useForecast ? growth6m : null}
+              value={growth6m}
               onChange={v => {
+                // 修复: 始终更新 state; 仅当用户实际偏离机构预测值时才标记手动模式
                 setGrowth6m(v);
-                if (hasForecast && v !== null) setForceManual(true);
+                if (hasForecast && v != null && v !== forecastPreview?.growth_6m_implied) {
+                  setForceManual(true);
+                }
               }}
               disabled={useForecast}
               placeholder={useForecast ? "已用机构预测" : "如 100 = 翻倍"}
@@ -204,12 +210,17 @@ export default function ValuationPanel({ stockCode }: { stockCode?: string }) {
               {useForecast && growth1y != null && (
                 <Tag color="blue" style={{ marginLeft: 4, fontSize: 10 }}>自动</Tag>
               )}
+              {hasForecast && forceManual && (
+                <Tag color="orange" style={{ marginLeft: 4, fontSize: 10 }}>手动</Tag>
+              )}
             </Text>
             <InputNumber
-              value={useForecast ? growth1y : null}
+              value={growth1y}
               onChange={v => {
                 setGrowth1y(v);
-                if (hasForecast && v !== null) setForceManual(true);
+                if (hasForecast && v != null && v !== forecastPreview?.growth_1y_implied) {
+                  setForceManual(true);
+                }
               }}
               disabled={useForecast}
               placeholder={useForecast ? "已用机构预测" : "如 150"}
