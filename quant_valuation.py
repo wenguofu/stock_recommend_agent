@@ -274,6 +274,22 @@ def calculate_valuation(inp: ValuationInput, momentum_adjustment: float = 0) -> 
     result.detail['effective_growth_1y'] = round(growth_1y, 1)
     result.detail['industry_growth_input'] = inp.industry_growth_1y
 
+    # ── 1.5 Sprint 7 v2: Forward PE (用机构预测 EPS) ──
+    # PE(TTM) 会因为单季亏损/低基数失真, Forward PE(2026E) 更能反映"现在买未来"的估值
+    # 保留 TTM PE 字段, 同时新增 pe_2026e
+    if inp.forecast_eps_2026e > 0 and price > 0:
+        pe_2026e = price / inp.forecast_eps_2026e
+        result.detail['pe_2026e'] = round(pe_2026e, 2)
+        result.detail['pe_source'] = 'forward_2026e'
+        # 如果 forward PE 更合理, 用它替代 TTM PE 做 PEG 和评分
+        if pe_2026e > 0 and pe_2026e < pe:
+            pe = pe_2026e
+            eps = inp.forecast_eps_2026e
+            result.current_pe = round(pe, 2)
+            result.detail['eps_ttm'] = round(eps, 4)  # 用 forecast 替代
+    elif inp.forecast_eps_2026e == 0:
+        result.detail['pe_source'] = 'ttm (无机构预测)'
+
     # ── 2. PEG 计算 ──
     effective_growth = growth_1y if growth_1y > 0 else profit_growth
     if pe > 0 and effective_growth > 0:
@@ -341,22 +357,48 @@ def calculate_valuation(inp: ValuationInput, momentum_adjustment: float = 0) -> 
         "对高成长股, 请参考 fair_value_growth 和 dcf_value"
     )
 
-    # ── 4. DCF简化版 ──
-    # 假设: 当前自由现金流 = EPS × 0.7 (简化), 折现率10%, 永续增长率3%
-    if eps > 0:
-        fcf = eps * 0.7
+    # ── 4. DCF简化版 (Sprint 7 优化 v3) ──
+    # 关键: base FCF 必须是 TTM (当前) 现金流, 不能用 forecast (否则等于 1-2 年后折现, 数值翻倍)
+    # 关键: 3 年增速采用机构预测 (6m/1y/2y), 而非单一 effective_growth
+    # 兜底: 若 TTM EPS ≤ 0 (亏损), 才用机构预测 EPS (亏损公司必须用未来现金流)
+    # 注: 必须用 inp.eps_ttm (原始 TTM), 不能用上面的局部变量 eps (PE 修复时已被覆盖)
+    dcf_base_eps = inp.eps_ttm
+    dcf_eps_source = "ttm"
+    if inp.eps_ttm <= 0 and inp.forecast_eps_2026e > 0:
+        # TTM 亏损 → 用机构预测 (亏损公司只能用未来现金流估算)
+        dcf_base_eps = inp.forecast_eps_2026e
+        dcf_eps_source = "forecast_2026e (TTM 亏损兜底)"
+
+    if dcf_base_eps > 0:
+        fcf = dcf_base_eps * 0.7
         discount_rate = 0.10
         terminal_growth = 0.03
 
-        # 3年现金流折现
-        dcf_sum = 0
-        for year in range(1, 4):
-            growth_factor = 1 + effective_growth / 100 if effective_growth > 0 else 1.05
-            projected_fcf = fcf * (growth_factor ** year)
-            dcf_sum += projected_fcf / ((1 + discount_rate) ** year)
+        # 3年增速序列: 优先用机构预测的 6m/1y/2y, 否则用 effective_growth
+        year_growths = []
+        if growth_6m > 0:
+            year_growths.append(growth_6m)
+        else:
+            year_growths.append(effective_growth if effective_growth > 0 else 5)
+        if growth_1y > 0:
+            year_growths.append(growth_1y)
+        else:
+            year_growths.append(year_growths[0])  # 用 6m 代替
+        if growth_2y > 0:
+            year_growths.append(growth_2y)
+        else:
+            # 兜底: 用 1y 的 80% (增速衰减)
+            year_growths.append(year_growths[1] * 0.8 if year_growths[1] > 0 else 5)
 
-        # 终值
-        terminal_value = (fcf * (growth_factor ** 3) * (1 + terminal_growth)) / (discount_rate - terminal_growth)
+        # 3年现金流折现 (按各年增速)
+        dcf_sum = 0
+        cumulative_factor = 1.0
+        for year, g in enumerate(year_growths[:3], start=1):
+            cumulative_factor *= (1 + g / 100)
+            projected_fcf = fcf * cumulative_factor
+            dcf_sum += projected_fcf / ((1 + discount_rate) ** year)
+        # 终值: 用第3年 FCF × (1+g_terminal) / (r-g_terminal), 折现到现值
+        terminal_value = (fcf * cumulative_factor * (1 + terminal_growth)) / (discount_rate - terminal_growth)
         terminal_pv = terminal_value / ((1 + discount_rate) ** 3)
 
         result.dcf_value = round(dcf_sum + terminal_pv, 2)
@@ -364,6 +406,10 @@ def calculate_valuation(inp: ValuationInput, momentum_adjustment: float = 0) -> 
             result.dcf_upside = round((result.dcf_value / price - 1) * 100, 1)
             # Sprint 7: DCF 安全边际 (DCF - price) / DCF, 是更可靠的安全边际指标
             result.dcf_margin = round((result.dcf_value - price) / result.dcf_value * 100, 1)
+
+        result.detail['dcf_base_eps'] = round(dcf_base_eps, 4)
+        result.detail['dcf_eps_source'] = dcf_eps_source
+        result.detail['dcf_year_growths'] = [round(g, 1) for g in year_growths[:3]]
 
         result.detail['dcf_annual_fcf'] = round(fcf, 4)
         result.detail['dcf_discount_rate'] = discount_rate
