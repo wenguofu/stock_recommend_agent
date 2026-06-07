@@ -354,3 +354,79 @@ class TestValuationRoutes:
         body = r.get_json()
         assert body['success'] is True
         assert 'forecast' in body['data']
+
+
+# ── 回归测试: 蓝思科技 300433 估值 bug ──────────────────────
+
+class TestLansTechnologyRegression:
+    """蓝思科技 (300433) 估值 PEG 为空的回归测试
+
+    历史 bug: 2026-03-31 一季报 EPS=-0.0284 (单季亏损),
+    auto_fill_from_db 错误地把它当成 TTM EPS, 导致 PE 算不出, PEG=0。
+
+    修复: TTM 优先用最新年报 EPS (2025-12-31 EPS=0.79), 负数时回退到机构预期
+    """
+
+    def test_eps_ttm_prefers_annual_over_quarterly_loss(self, fresh_quant_valuation):
+        """季报亏损时, 应优先用年报 EPS 作为 TTM"""
+        from sqlalchemy import text
+        from models import get_db
+        db = next(get_db())
+        try:
+            row = db.execute(text("""
+                SELECT report_date, eps, pe_ttm FROM stock_financials
+                WHERE code = '300433'
+                ORDER BY report_date DESC LIMIT 4
+            """)).fetchall()
+        finally:
+            db.close()
+
+        if not row:
+            pytest.skip("数据库中无 300433 数据, 跳过回归测试")
+
+        # Mock realtime (get_realtime_data 在函数内 import, 用 sys.modules 拦截)
+        mock_data_fetchers = MagicMock()
+        mock_data_fetchers.get_realtime_data.return_value = {'current_price': 45.61, 'name': '蓝思科技'}
+        with patch.dict(sys.modules, {'data_fetchers': mock_data_fetchers}):
+            result = fresh_quant_valuation.quick_valuation(
+                code='300433', industry_growth_6m=34, industry_growth_1y=30,
+            )
+
+        eps_ttm = result.get('eps_ttm', 0)
+        assert eps_ttm > 0, f"TTM EPS 仍为 {eps_ttm}, 修复失败"
+
+        peg = result.get('peg_ratio', 0)
+        assert peg > 0, f"PEG 比率仍为 {peg}, 估值无法计算"
+
+        pe = result.get('current_pe', 0)
+        assert pe > 0, f"current_pe 仍为 {pe}, 估值失败"
+
+    def test_negative_quarter_eps_fallback_to_analyst(self, fresh_quant_valuation):
+        """单元测试: TTM 为负时, 回退到机构预期 EPS_2026E"""
+        from sqlalchemy.exc import OperationalError
+
+        # Mock: SessionLocal 抛 OperationalError, 模拟 DB 不可用
+        mock_session = MagicMock()
+        mock_session.query.side_effect = OperationalError(
+            "SELECT", {}, Exception("table missing")
+        )
+        mock_models = MagicMock()
+        mock_models.SessionLocal.return_value = mock_session
+
+        mock_data_fetchers = MagicMock()
+        mock_data_fetchers.get_realtime_data.return_value = {'current_price': 10}
+
+        mock_fc = {
+            'net_profit_2025a': 5.0, 'net_profit_2026e': 10.0, 'net_profit_2027e': 15.0,
+            'eps_2026e': 1.5, 'eps_2027e': 2.25,
+            'analyst_count': 5, 'rating_label': '买入', 'updated_at': '',
+            'has_data': True,
+        }
+        with patch.dict(sys.modules, {'models': mock_models, 'data_fetchers': mock_data_fetchers}):
+            with patch.object(fresh_quant_valuation, 'get_institutional_forecast', return_value=mock_fc):
+                inp = fresh_quant_valuation.ValuationInput(code='999999')
+                inp = fresh_quant_valuation.auto_fill_from_db(inp)
+
+                # TTM 数据库不可用 → 仍为 0 → 回退到机构预期 1.5
+                assert inp.eps_ttm == 1.5, f"应为机构预期 1.5, 实际 {inp.eps_ttm}"
+                assert inp.forecast_source == "institutional"

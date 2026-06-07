@@ -487,57 +487,106 @@ def auto_fill_institutional_forecast(inp: ValuationInput) -> ValuationInput:
 
 
 def auto_fill_from_db(inp: ValuationInput) -> ValuationInput:
-    """从数据库自动填充财务数据 (含机构预测)"""
+    """从数据库自动填充财务数据 (含机构预测)
+
+    数据源优先级 (以 eps_ttm 为例):
+      1. 用户已手动输入 → 保留
+      2. realtime.pe_ttm + current_price → 实时 TTM PE (最准确)
+      3. StockFinancial 中 pe_ttm 字段 → DB 中存的 PE
+      4. StockFinancial 最新年报 EPS (12-31) → 优先用全年而非单季
+      5. StockFinancial 最新季报 EPS (单季) → 兜底, 可能为负
+      6. 机构一致预期 EPS_2026E → TTM 为负或 0 时回退
+
+    Bug 修复: 蓝思科技 300433 案例
+      旧逻辑取最新季报 (2026-03-31, EPS=-0.0284 单季亏损) → TTM 为负
+      修复: 优先用 2025-12-31 年报 EPS=0.79, PE=4.29
+    """
     try:
+        from sqlalchemy import text
         from models import SessionLocal, StockFinancial
         db = SessionLocal()
         try:
-            # 获取最新财务数据
-            fin = (
+            # 取所有相关报告 (一次性查询, 避免多次往返)
+            fins = (
                 db.query(StockFinancial)
                 .filter(StockFinancial.code == inp.code)
                 .order_by(StockFinancial.report_date.desc())
-                .first()
+                .limit(8)
+                .all()
             )
-            if fin:
-                if inp.eps_ttm <= 0:
-                    inp.eps_ttm = _safe_float(fin.eps)
-                if inp.pe_ttm <= 0:
-                    inp.pe_ttm = _safe_float(fin.pe_ttm)
-                if inp.pb <= 0:
-                    inp.pb = _safe_float(fin.pb)
-                if inp.roe <= 0:
-                    inp.roe = _safe_float(fin.roe)
+
+            # 找最新的年报 (report_date 12-31, 优先级最高)
+            annual_fin = None
+            for f in fins:
+                rd = (f.report_date or "")
+                if rd.endswith("-12-31") or rd.endswith("1231"):
+                    annual_fin = f
+                    break
+            # 最新季报 (用于 profit_yoy / revenue_yoy 等单季数据)
+            latest_fin = fins[0] if fins else None
+
+            # 1. EPS_TTM: 优先用年报 EPS (避免亏损季拉低 TTM)
+            if inp.eps_ttm <= 0:
+                if annual_fin and _safe_float(annual_fin.eps) > 0:
+                    inp.eps_ttm = _safe_float(annual_fin.eps)
+                elif latest_fin:
+                    inp.eps_ttm = _safe_float(latest_fin.eps)
+
+            # 2. PE_TTM: 优先用年报的 PE 字段 (有可能是 None)
+            if inp.pe_ttm <= 0:
+                pe_val = _safe_float(getattr(annual_fin or latest_fin, 'pe_ttm', 0))
+                if pe_val > 0:
+                    inp.pe_ttm = pe_val
+
+            # 3. PB: 用最新 (年报或季报)
+            if inp.pb <= 0:
+                pb_val = _safe_float(getattr(annual_fin or latest_fin, 'pb', 0))
+                if pb_val > 0:
+                    inp.pb = pb_val
+
+            # 4. ROE: 用最新年报
+            if inp.roe <= 0:
+                roe_val = _safe_float(getattr(annual_fin or latest_fin, 'roe', 0))
+                if roe_val > 0:
+                    inp.roe = roe_val
+
+            # 5. 增长率: 用最新季报的同比 (单季同比更具时效性)
+            if latest_fin:
                 if inp.revenue_yoy <= 0:
-                    inp.revenue_yoy = _safe_float(fin.revenue_yoy)
+                    inp.revenue_yoy = _safe_float(latest_fin.revenue_yoy)
                 if inp.profit_yoy <= 0:
-                    inp.profit_yoy = _safe_float(fin.profit_yoy)
+                    inp.profit_yoy = _safe_float(latest_fin.profit_yoy)
                 if inp.gross_margin <= 0:
-                    inp.gross_margin = _safe_float(fin.gross_margin)
-                # 修复: StockFinancial 模型目前没有 debt_ratio 字段, 用 getattr 容错
-                if inp.debt_ratio <= 0:
-                    inp.debt_ratio = _safe_float(getattr(fin, 'debt_ratio', 0))
+                    inp.gross_margin = _safe_float(latest_fin.gross_margin)
+
+            # 6. debt_ratio 容错 (StockFinancial 模型目前没有此字段)
+            if inp.debt_ratio <= 0:
+                inp.debt_ratio = _safe_float(getattr(latest_fin, 'debt_ratio', 0))
         finally:
             db.close()
     except Exception as e:
         logger.warning(f"auto_fill_from_db({inp.code}) failed: {e}")
 
-    # 从实时行情获取PE/PB/价格
+    # 从实时行情获取当前价格 (Sina 实时数据)
     try:
         from data_fetchers import get_realtime_data
         rt = get_realtime_data(inp.code)
         if rt:
             if inp.current_price <= 0:
                 inp.current_price = _safe_float(rt.get('current_price', 0))
-            if inp.pe_ttm <= 0:
-                inp.pe_ttm = _safe_float(rt.get('pe_ttm', 0))
-            if inp.pb <= 0:
-                inp.pb = _safe_float(rt.get('pb', 0))
     except Exception:
         pass
 
     # ── Sprint 6 优化: 自动使用机构预测净利润 ──
     auto_fill_institutional_forecast(inp)
+
+    # 兜底: 若 EPS_TTM 仍为 0 或负 (T 季度亏损) → 用机构一致预期 EPS_2026E 替代
+    if inp.eps_ttm <= 0 and inp.forecast_eps_2026e > 0:
+        logger.info(
+            f"auto_fill_from_db({inp.code}): TTM EPS 不可用 ({inp.eps_ttm}), "
+            f"回退到机构一致预期 2026E EPS={inp.forecast_eps_2026e}"
+        )
+        inp.eps_ttm = inp.forecast_eps_2026e
 
     # 从板块预测获取行业展望
     if inp.sector_name and not inp.sector_outlook:
