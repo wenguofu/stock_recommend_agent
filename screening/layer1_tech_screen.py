@@ -7,21 +7,52 @@ from typing import Tuple, List, Dict
 def is_market_safe_for_screening() -> Tuple[bool, dict]:
     """
     检查大盘环境是否适合筛选
-    条件: 涨幅>8%股数 >= 50 且 跌幅>8%股数 <= 50
+    条件: 涨幅>8%股数 >= 50 且 跌停股数 <= 50
+
+    使用tushare获取全市场完整数据
     """
     try:
-        import akshare as ak
-        from datetime import datetime
+        from datetime import datetime, timedelta
 
-        today = datetime.now().strftime('%Y%m%d')
+        today = datetime.now()
+        # 如果是周末，使用最近交易日
+        if today.weekday() == 5:  # 周六
+            trading_date = (today - timedelta(days=1)).strftime('%Y%m%d')
+        elif today.weekday() == 6:  # 周日
+            trading_date = (today - timedelta(days=2)).strftime('%Y%m%d')
+        else:
+            trading_date = today.strftime('%Y%m%d')
 
-        # 涨幅>8%股票池
-        strong = ak.stock_zt_pool_strong_em(date=today)
-        strong_count = len(strong[strong['涨跌幅'] > 8]) if '涨跌幅' in strong.columns else len(strong)
+        strong_count = 0
+        limit_down_count = 0
 
-        # 跌停股票池
-        dt = ak.stock_zt_pool_dtgc_em(date=today)
-        limit_down_count = len(dt)
+        # 使用tushare获取全市场日行情
+        try:
+            import tushare as ts
+            from utils_crypto import get_tushare_token
+
+            token = get_tushare_token()
+            if token:
+                ts.set_token(token)
+                pro = ts.pro_api()
+                df = pro.daily(trade_date=trading_date)
+
+                if df is not None and not df.empty:
+                    strong_count = int(len(df[df['pct_chg'] > 8]))
+                    limit_down_count = int(len(df[df['pct_chg'] <= -9]))
+        except Exception as e:
+            print(f"[market_check] tushare error: {e}")
+
+        # fallback到akshare
+        if strong_count == 0:
+            try:
+                import akshare as ak
+                strong = ak.stock_zt_pool_strong_em(date=trading_date)
+                strong_count = len(strong[strong['涨跌幅'] > 8]) if '涨跌幅' in strong.columns else 0
+                limit_down = ak.stock_zt_pool_dtgc_em(date=trading_date)
+                limit_down_count = len(limit_down)
+            except Exception:
+                pass
 
         is_safe = (strong_count >= 50) and (limit_down_count <= 50)
 
@@ -29,6 +60,7 @@ def is_market_safe_for_screening() -> Tuple[bool, dict]:
             'strong_count': strong_count,
             'limit_down_count': limit_down_count,
             'reason': 'safe' if is_safe else 'market_risk',
+            'trading_date': trading_date,
             'timestamp': datetime.now().isoformat()
         }
     except Exception as e:

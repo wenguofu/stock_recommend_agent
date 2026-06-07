@@ -255,3 +255,205 @@ def register_risk_routes(app):
             return jsonify({'success': True, 'data': result})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500
+
+    # ═══════════════════════════════════════════════════════════
+    # 「击败庄家」新增端点
+    # ═══════════════════════════════════════════════════════════
+
+    @app.route('/api/risk/edge', methods=['POST'])
+    def api_risk_edge():
+        """
+        期望值/优势计算
+
+        Body (统计模式):
+            {"win_rate": 0.55, "avg_win_pct": 8.0, "avg_loss_pct": 5.0}
+        Body (价位模式):
+            {"win_rate": 0.55, "entry_price": 50.0, "target_price": 55.0, "stop_price": 47.0}
+        """
+        from risk_management import calc_trade_edge
+
+        data = request.get_json(silent=True) or {}
+        win_rate = float(data.get('win_rate', 0.5))
+        avg_win_pct = data.get('avg_win_pct')
+        avg_loss_pct = data.get('avg_loss_pct')
+        entry_price = data.get('entry_price')
+        target_price = data.get('target_price')
+        stop_price = data.get('stop_price')
+
+        # 价位模式
+        if entry_price and target_price and stop_price:
+            avg_win_pct = float(avg_win_pct) if avg_win_pct else None
+            avg_loss_pct = float(avg_loss_pct) if avg_loss_pct else None
+        else:
+            avg_win_pct = float(avg_win_pct) if avg_win_pct else 5.0
+            avg_loss_pct = float(avg_loss_pct) if avg_loss_pct else 5.0
+
+        try:
+            result = calc_trade_edge(
+                win_rate, avg_win_pct, avg_loss_pct,
+                entry_price=float(entry_price) if entry_price else None,
+                target_price=float(target_price) if target_price else None,
+                stop_price=float(stop_price) if stop_price else None,
+            )
+            return jsonify({'success': True, 'data': result})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/risk/ruin', methods=['POST'])
+    def api_risk_ruin():
+        """
+        破产风险计算
+
+        Body:
+            {"win_rate": 0.55, "avg_win_pct": 8.0, "avg_loss_pct": 5.0, "position_pct": 20}
+        或:
+            {"win_rate": 0.55, "avg_win_pct": 8.0, "avg_loss_pct": 5.0, "capital_units": 50}
+        """
+        from risk_management import calc_risk_of_ruin
+
+        data = request.get_json(silent=True) or {}
+        win_rate = float(data.get('win_rate', 0.5))
+        avg_win_pct = float(data.get('avg_win_pct', 5.0))
+        avg_loss_pct = float(data.get('avg_loss_pct', 5.0))
+        position_pct = data.get('position_pct')
+        capital_units = data.get('capital_units')
+
+        try:
+            result = calc_risk_of_ruin(
+                win_rate, avg_win_pct, avg_loss_pct,
+                position_pct=float(position_pct) if position_pct else None,
+                capital_units=float(capital_units) if capital_units else 20.0,
+            )
+            return jsonify({'success': True, 'data': result})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/risk/dynamic_kelly', methods=['POST'])
+    def api_risk_dynamic_kelly():
+        """
+        动态凯利仓位计算 (含不确定性+回撤调整)
+
+        Body:
+            {"win_rate": 0.55, "avg_win_pct": 8.0, "avg_loss_pct": 5.0,
+             "sample_size": 30, "current_drawdown_pct": 5.0}
+        """
+        from risk_management import calc_dynamic_kelly
+
+        data = request.get_json(silent=True) or {}
+        win_rate = float(data.get('win_rate', 0.5))
+        avg_win_pct = float(data.get('avg_win_pct', 5.0))
+        avg_loss_pct = float(data.get('avg_loss_pct', 5.0))
+        sample_size = int(data.get('sample_size', 30))
+        current_drawdown_pct = float(data.get('current_drawdown_pct', 0))
+
+        try:
+            result = calc_dynamic_kelly(
+                win_rate, avg_win_pct, avg_loss_pct,
+                sample_size=sample_size,
+                current_drawdown_pct=current_drawdown_pct,
+            )
+            return jsonify({'success': True, 'data': result})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/risk/multi_stop', methods=['POST'])
+    def api_risk_multi_stop():
+        """
+        多层止损计算
+
+        Body:
+            {"code": "300679", "entry_price": 55.0, "max_loss_pct": 8.0,
+             "atr_multiplier": 2.0, "trailing_pct": 5.0, "time_limit_days": 20}
+        """
+        from risk_management import calc_multi_tier_stop
+
+        data = request.get_json(silent=True) or {}
+        code = data.get('code', '').strip()
+        entry_price = float(data.get('entry_price', 0))
+        max_loss_pct = float(data.get('max_loss_pct', 8.0))
+        atr_multiplier = float(data.get('atr_multiplier', 2.0))
+        trailing_pct = float(data.get('trailing_pct', 5.0))
+        time_limit_days = int(data.get('time_limit_days', 20))
+
+        if not code or entry_price <= 0:
+            return jsonify({'error': 'code 和 entry_price 必填'}), 400
+
+        try:
+            result = calc_multi_tier_stop(
+                code, entry_price,
+                max_loss_pct=max_loss_pct,
+                atr_multiplier=atr_multiplier,
+                trailing_pct=trailing_pct,
+                time_limit_days=time_limit_days,
+            )
+            return jsonify({'success': True, 'data': result})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/risk/drawdown_position', methods=['POST'])
+    def api_risk_drawdown_position():
+        """
+        回撤感知仓位调整
+
+        Body:
+            {"total_capital": 100000, "base_position_pct": 20,
+             "current_drawdown_pct": 12.0}
+        """
+        from risk_management import calc_drawdown_aware_position
+
+        data = request.get_json(silent=True) or {}
+        total_capital = float(data.get('total_capital', 0))
+        base_position_pct = float(data.get('base_position_pct', 20))
+        current_drawdown_pct = float(data.get('current_drawdown_pct', 0))
+
+        if total_capital <= 0:
+            return jsonify({'error': 'total_capital 必须 > 0'}), 400
+
+        try:
+            result = calc_drawdown_aware_position(
+                total_capital, base_position_pct, current_drawdown_pct,
+            )
+            return jsonify({'success': True, 'data': result})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/risk/beat_the_dealer', methods=['POST'])
+    def api_beat_the_dealer():
+        """
+        「击败庄家」一站式仓位+止损 (推荐直接使用)
+
+        Body:
+            {"code": "300679", "total_capital": 100000,
+             "entry_price": 55.0, "target_price": 65.0,
+             "current_drawdown_pct": 0, "risk_profile": "moderate"}
+
+        可选覆盖交易统计:
+            {"code": "300679", "total_capital": 100000,
+             "win_rate": 0.55, "avg_win_pct": 8.0, "avg_loss_pct": 5.0,
+             "sample_size": 50}
+        """
+        from risk_management import beat_the_dealer_full
+
+        data = request.get_json(silent=True) or {}
+        code = data.get('code', '').strip()
+        total_capital = float(data.get('total_capital', 0))
+
+        if not code or total_capital <= 0:
+            return jsonify({'error': 'code 和 total_capital 必填'}), 400
+
+        try:
+            result = beat_the_dealer_full(
+                code=code,
+                total_capital=total_capital,
+                entry_price=float(data['entry_price']) if data.get('entry_price') else None,
+                target_price=float(data['target_price']) if data.get('target_price') else None,
+                current_drawdown_pct=float(data.get('current_drawdown_pct', 0)),
+                win_rate=float(data['win_rate']) if data.get('win_rate') else None,
+                avg_win_pct=float(data['avg_win_pct']) if data.get('avg_win_pct') else None,
+                avg_loss_pct=float(data['avg_loss_pct']) if data.get('avg_loss_pct') else None,
+                sample_size=int(data.get('sample_size', 30)),
+                risk_profile=data.get('risk_profile', 'moderate'),
+            )
+            return jsonify({'success': True, 'data': result})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500

@@ -515,12 +515,17 @@ def get_daily_kline(code, count=240):
                                 df = pd.concat([df, new_row], ignore_index=True)
                                 # 写入DB
                                 try:
+                                    from sqlalchemy import text
                                     db2 = SessionLocal()
-                                    db2.execute(db2.text(
-                                        "INSERT OR REPLACE INTO backtest_data (code, date, open, high, low, close, volume, amount) VALUES (:c, :d, :o, :h, :l, :cl, :v, :a)"),
-                                        {'c': code, 'd': t_date, 'o': open_p, 'h': high, 'l': low, 'cl': price, 'v': vol, 'a': amount})
-                                    db2.commit(); db2.close()
-                                except: pass
+                                    try:
+                                        db2.execute(text(
+                                            "INSERT OR REPLACE INTO backtest_data (code, date, open, high, low, close, volume, amount) VALUES (:c, :d, :o, :h, :l, :cl, :v, :a)"),
+                                            {'c': code, 'd': t_date, 'o': open_p, 'h': high, 'l': low, 'cl': price, 'v': vol, 'a': amount})
+                                        db2.commit()
+                                    finally:
+                                        db2.close()
+                                except Exception as e:
+                                    logger.error(f"腾讯API补充 {code}:{t_date} 写入 backtest_data 失败: {e}", exc_info=True)
                                 print(f"[BacktestCache] 腾讯API补充 {code}: {t_date}")
                     except Exception:
                         pass  # 腾讯失败不阻塞

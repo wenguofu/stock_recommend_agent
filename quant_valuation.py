@@ -44,6 +44,17 @@ class ValuationInput:
     # 可选：板块名称用于自动推断
     sector_name: str = ""
 
+    # 机构预测元数据 (Sprint 6 优化: 自动使用机构预测净利润)
+    forecast_source: str = ""        # "institutional" / "user" / "none"
+    forecast_net_profit_2025a: float = 0.0   # 机构预测: 2025A 实际净利润(亿)
+    forecast_net_profit_2026e: float = 0.0   # 机构预测: 2026E 净利润(亿)
+    forecast_net_profit_2027e: float = 0.0   # 机构预测: 2027E 净利润(亿)
+    forecast_eps_2026e: float = 0.0
+    forecast_eps_2027e: float = 0.0
+    forecast_analyst_count: int = 0
+    forecast_rating_label: str = ""
+    forecast_updated_at: str = ""
+
 
 @dataclass
 class ValuationResult:
@@ -300,8 +311,177 @@ def calculate_valuation(inp: ValuationInput) -> ValuationResult:
     return result
 
 
+def _parse_yi_value(v) -> float:
+    """解析 "1.2亿" / "125.3 亿" / "0.85" 等格式, 返回数值(以亿为单位)"""
+    if v is None:
+        return 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip()
+    if not s:
+        return 0.0
+    # 提取首个数字(含小数点和负号)
+    import re
+    m = re.search(r'-?\d+\.?\d*', s)
+    if not m:
+        return 0.0
+    return _safe_float(m.group(0))
+
+
+def get_institutional_forecast(code: str) -> Optional[Dict]:
+    """
+    从 prediction_aggregates 表读取机构预测。
+
+    Returns:
+        dict: {
+            'net_profit_2025a': float (亿),
+            'net_profit_2026e': float (亿),
+            'net_profit_2027e': float (亿),
+            'eps_2026e': float,
+            'eps_2027e': float,
+            'analyst_count': int,
+            'rating_label': str,
+            'updated_at': str,
+            'has_data': bool,
+        }
+        或 None (表不存在/读失败)
+    """
+    try:
+        from sqlalchemy import text
+        from models import get_db
+        db = next(get_db())
+        try:
+            row = db.execute(
+                text("SELECT net_profit_2025a, net_profit_2026e, net_profit_2027e, "
+                     "net_profit_2028e, eps_2025a, eps_2026e, eps_2027e, eps_2028e, "
+                     "rating_label, analyst_count, updated_at "
+                     "FROM prediction_aggregates WHERE code = :code LIMIT 1"),
+                {"code": code}
+            ).fetchone()
+            if not row:
+                return None
+            d = dict(row._mapping)
+            np_25 = _parse_yi_value(d.get('net_profit_2025a'))
+            np_26 = _parse_yi_value(d.get('net_profit_2026e'))
+            np_27 = _parse_yi_value(d.get('net_profit_2027e'))
+            eps_26 = _parse_yi_value(d.get('eps_2026e'))
+            eps_27 = _parse_yi_value(d.get('eps_2027e'))
+            analyst_count = _safe_int(d.get('analyst_count'))
+            has_data = (np_25 > 0 and np_26 > 0) or eps_26 > 0
+            return {
+                'net_profit_2025a': np_25,
+                'net_profit_2026e': np_26,
+                'net_profit_2027e': np_27,
+                'eps_2026e': eps_26,
+                'eps_2027e': eps_27,
+                'analyst_count': analyst_count,
+                'rating_label': (d.get('rating_label') or '').strip(),
+                'updated_at': (d.get('updated_at') or '').strip(),
+                'has_data': has_data,
+            }
+        finally:
+            db.close()
+    except Exception as e:
+        # 表不存在/字段不存在/无 MySQL — 静默返回 None
+        logger.debug(f"get_institutional_forecast({code}): {e}")
+        return None
+
+
+def _safe_int(v, default=0) -> int:
+    try:
+        if v is None or v == '':
+            return default
+        return int(float(v))
+    except (ValueError, TypeError):
+        return default
+
+
+def auto_fill_institutional_forecast(inp: ValuationInput) -> ValuationInput:
+    """
+    从 prediction_aggregates 表读取机构预测, 计算行业增速, 填入 inp.
+
+    优先级:
+      - 用户已手动输入 industry_growth_6m/1y (>0) → 标记 "user", 不覆盖
+      - 有 2025A + 2026E 净利润 → 计算 6m ≈ (2026E - 2025A)/2025A,
+                                    1y ≈ (2027E - 2025A)/2025A (CAGR×2)
+      - 仅有 EPS 预测 → 用 (eps_2026e / eps_ttm - 1) 推算
+    """
+    fc = get_institutional_forecast(inp.code)
+    if not fc or not fc.get('has_data'):
+        # 没有机构预测数据, 标记数据源
+        if inp.industry_growth_6m > 0 or inp.industry_growth_1y > 0:
+            inp.forecast_source = "user"
+        elif not inp.forecast_source:
+            inp.forecast_source = "none"
+        return inp
+
+    # 记录原始预测数据
+    inp.forecast_net_profit_2025a = fc['net_profit_2025a']
+    inp.forecast_net_profit_2026e = fc['net_profit_2026e']
+    inp.forecast_net_profit_2027e = fc['net_profit_2027e']
+    inp.forecast_eps_2026e = fc['eps_2026e']
+    inp.forecast_eps_2027e = fc['eps_2027e']
+    inp.forecast_analyst_count = fc['analyst_count']
+    inp.forecast_rating_label = fc['rating_label']
+    inp.forecast_updated_at = fc['updated_at']
+
+    # 用户已输入则保留, 标注 "user"
+    user_provided_6m = inp.industry_growth_6m > 0
+    user_provided_1y = inp.industry_growth_1y > 0
+    if user_provided_6m and user_provided_1y:
+        inp.forecast_source = "user"
+        return inp
+
+    # 计算 6m (半年) 增速 = (2026E - 2025A) / 2025A
+    growth_6m = 0.0
+    if fc['net_profit_2025a'] > 0 and fc['net_profit_2026e'] > 0:
+        growth_6m = (fc['net_profit_2026e'] - fc['net_profit_2025a']) / fc['net_profit_2025a'] * 100
+    elif fc['eps_2026e'] > 0 and inp.eps_ttm > 0:
+        growth_6m = (fc['eps_2026e'] - inp.eps_ttm) / inp.eps_ttm * 100
+
+    # 计算 1y (年化) 增速 = ((2027E / 2025A)^(1/2) - 1) * 100
+    growth_1y = 0.0
+    if fc['net_profit_2025a'] > 0 and fc['net_profit_2027e'] > 0:
+        ratio = fc['net_profit_2027e'] / fc['net_profit_2025a']
+        if ratio > 0:
+            growth_1y = (pow(ratio, 0.5) - 1) * 100
+    elif fc['net_profit_2025a'] > 0 and fc['net_profit_2026e'] > 0:
+        # 无 2027 数据, 用 2026E 同比代替
+        growth_1y = growth_6m
+    elif fc['eps_2027e'] > 0 and inp.eps_ttm > 0:
+        growth_1y = (fc['eps_2027e'] - inp.eps_ttm) / inp.eps_ttm * 100 / 2
+
+    if not user_provided_6m and growth_6m != 0:
+        inp.industry_growth_6m = growth_6m
+    if not user_provided_1y and growth_1y != 0:
+        inp.industry_growth_1y = growth_1y
+
+    # 计算 2y = 2028E 同比
+    try:
+        from sqlalchemy import text
+        from models import get_db
+        db = next(get_db())
+        try:
+            row = db.execute(
+                text("SELECT net_profit_2027e, net_profit_2028e FROM prediction_aggregates WHERE code=:code"),
+                {"code": inp.code}
+            ).fetchone()
+            if row:
+                np27 = _parse_yi_value(row[0])
+                np28 = _parse_yi_value(row[1])
+                if np27 > 0 and np28 > 0 and inp.industry_growth_2y <= 0:
+                    inp.industry_growth_2y = (np28 - np27) / np27 * 100
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+    inp.forecast_source = "institutional"
+    return inp
+
+
 def auto_fill_from_db(inp: ValuationInput) -> ValuationInput:
-    """从数据库自动填充财务数据"""
+    """从数据库自动填充财务数据 (含机构预测)"""
     try:
         from models import SessionLocal, StockFinancial
         db = SessionLocal()
@@ -328,8 +508,9 @@ def auto_fill_from_db(inp: ValuationInput) -> ValuationInput:
                     inp.profit_yoy = _safe_float(fin.profit_yoy)
                 if inp.gross_margin <= 0:
                     inp.gross_margin = _safe_float(fin.gross_margin)
+                # 修复: StockFinancial 模型目前没有 debt_ratio 字段, 用 getattr 容错
                 if inp.debt_ratio <= 0:
-                    inp.debt_ratio = _safe_float(fin.debt_ratio)
+                    inp.debt_ratio = _safe_float(getattr(fin, 'debt_ratio', 0))
         finally:
             db.close()
     except Exception as e:
@@ -348,6 +529,9 @@ def auto_fill_from_db(inp: ValuationInput) -> ValuationInput:
                 inp.pb = _safe_float(rt.get('pb', 0))
     except Exception:
         pass
+
+    # ── Sprint 6 优化: 自动使用机构预测净利润 ──
+    auto_fill_institutional_forecast(inp)
 
     # 从板块预测获取行业展望
     if inp.sector_name and not inp.sector_outlook:
@@ -417,4 +601,20 @@ def quick_valuation(code: str, industry_growth_1y: float = 0,
         'rating': result.rating,
         'summary': result.summary,
         'detail': result.detail,
+        # Sprint 6 优化: 机构预测元数据
+        'forecast': {
+            'source': inp.forecast_source or "none",
+            'has_data': inp.forecast_source == "institutional",
+            'net_profit_2025a': inp.forecast_net_profit_2025a,
+            'net_profit_2026e': inp.forecast_net_profit_2026e,
+            'net_profit_2027e': inp.forecast_net_profit_2027e,
+            'eps_2026e': inp.forecast_eps_2026e,
+            'eps_2027e': inp.forecast_eps_2027e,
+            'analyst_count': inp.forecast_analyst_count,
+            'rating_label': inp.forecast_rating_label,
+            'updated_at': inp.forecast_updated_at,
+            'growth_6m_implied': inp.industry_growth_6m,
+            'growth_1y_implied': inp.industry_growth_1y,
+            'growth_2y_implied': inp.industry_growth_2y,
+        },
     }

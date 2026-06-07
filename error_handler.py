@@ -127,6 +127,27 @@ def register_error_handler(app):
 
     @app.errorhandler(404)
     def handle_404(e):
+        from flask import request, send_from_directory
+        import logging
+        logger = logging.getLogger(__name__)
+        # Sprint6: SPA fallback - 非 /api/ 请求一律返回 index.html
+        logger.info(f"404 hit: path={request.path} accept={request.headers.get('Accept', '')}")
+        if not request.path.startswith("/api/"):
+            try:
+                import os
+                # 优先用 api_server.py 中的 FRONTEND_DIR 路径
+                try:
+                    from api_server import FRONTEND_DIR
+                except Exception:
+                    FRONTEND_DIR = os.path.join(
+                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "stock_frontend", "dist")
+                index_path = os.path.join(FRONTEND_DIR, "index.html")
+                logger.info(f"SPA fallback: FRONTEND_DIR={FRONTEND_DIR} exists={os.path.isfile(index_path)}")
+                if os.path.isfile(index_path):
+                    return send_from_directory(FRONTEND_DIR, "index.html")
+            except Exception as ex:
+                logger.warning(f"SPA fallback err: {ex}")
         return api_error("路由不存在", "not_found", 404)
 
     @app.errorhandler(405)
@@ -136,3 +157,72 @@ def register_error_handler(app):
     @app.errorhandler(500)
     def handle_500(e):
         return api_error("服务器内部错误", "internal_error", 500, detail=str(e))
+
+
+# ═══════════════════════════════════════════
+# 统一响应装饰器 (修复 ARCH-02: 端点迁移到统一格式)
+# ═══════════════════════════════════════════
+
+from functools import wraps
+import logging as _logging
+
+_json_endpoint_logger = _logging.getLogger(__name__)
+
+
+def json_endpoint(schema: str = "success", rate_limit_name: str = None):
+    """统一响应格式装饰器(渐进式迁移用)
+
+    用法:
+        @json_endpoint("success")
+        def my_endpoint():
+            return {"key": "value"}   # 自动包成 {"success": true, "data": {...}}
+
+        @json_endpoint("list")
+        def list_endpoint():
+            return [{"a": 1}, {"a": 2}]   # 自动包成 {"success": true, "data": [...], "total": 2}
+
+        @json_endpoint("error", rate_limit_name="debate_start")
+        def error_endpoint():
+            raise BadRequestError("invalid input")
+
+    schema 选项:
+        - "success": 返回 dict 包装为 {success, data}
+        - "list":    返回 list 包装为 {success, data, total}
+        - "raw":     原样返回 (用于已标准化的端点)
+    """
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            try:
+                result = f(*args, **kwargs)
+            except AppError as e:
+                return api_error(
+                    message=e.message,
+                    error_type=e.error_type,
+                    status_code=e.status_code,
+                    detail=e.detail,
+                )
+            except Exception as e:
+                _json_endpoint_logger.error(f"Endpoint {f.__name__} unhandled: {e}", exc_info=True)
+                return api_error(
+                    message=f"处理失败: {type(e).__name__}",
+                    error_type="internal_error",
+                    status_code=500,
+                    detail=str(e),
+                )
+            # 已是 Response 对象,直接返回
+            if hasattr(result, "headers") and hasattr(result, "status_code"):
+                return result
+            if schema == "list":
+                if isinstance(result, tuple) and len(result) == 2:
+                    items, total = result
+                    return api_list_response(items, total)
+                if isinstance(result, list):
+                    return api_list_response(result, len(result))
+                return api_success(result)
+            if schema == "raw":
+                return result
+            # 默认 success
+            return api_success(result)
+        return wrapper
+    return decorator

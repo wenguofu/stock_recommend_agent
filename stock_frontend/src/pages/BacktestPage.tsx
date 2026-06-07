@@ -7,6 +7,7 @@ import {
   Typography, Space, Tag, Row, Col, Spin, Input
 } from 'antd';
 import { LeftOutlined } from '@ant-design/icons';
+import dayjs, { Dayjs } from 'dayjs';
 
 const { Title, Text } = Typography;
 
@@ -137,7 +138,7 @@ export default function BacktestPage() {
               <Text type="secondary" style={{ fontSize: 12 }}>开始日期</Text>
             </div>
             <DatePicker
-              value={startDate ? undefined : undefined}
+              value={startDate ? dayjs(startDate) : null}
               onChange={(_, dateStr) => setStartDate(dateStr as string)}
               style={{ width: '100%' }}
               placeholder="选择开始日期"
@@ -148,6 +149,7 @@ export default function BacktestPage() {
               <Text type="secondary" style={{ fontSize: 12 }}>结束日期</Text>
             </div>
             <DatePicker
+              value={endDate ? dayjs(endDate) : null}
               onChange={(_, dateStr) => setEndDate(dateStr as string)}
               style={{ width: '100%' }}
               placeholder="选择结束日期"

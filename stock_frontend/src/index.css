@@ -8,3 +8,91 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* ─── Sprint5: 移动端响应式 ─── */
+@media (max-width: 768px) {
+  /* 侧边栏默认收起 */
+  .ant-layout-sider {
+    position: fixed !important;
+    z-index: 1000;
+    height: 100vh;
+  }
+  /* 主内容区加左边距, 避免被固定侧边栏遮挡 */
+  .ant-layout {
+    margin-left: 0 !important;
+  }
+  /* 表格横向滚动 */
+  .ant-table {
+    overflow-x: auto;
+  }
+  /* 卡片更紧凑 */
+  .ant-card {
+    margin-bottom: 12px !important;
+  }
+  /* 标题字号缩小 */
+  h2 {
+    font-size: 18px !important;
+  }
+  /* Content 内边距 */
+  .ant-layout-content {
+    padding: 12px !important;
+  }
+  /* 卡片体 */
+  .ant-card-body {
+    padding: 12px !important;
+  }
+  /* 统计数字字号 */
+  .ant-statistic-content {
+    font-size: 18px !important;
+  }
+  /* 表单行布局在小屏改为垂直 */
+  .ant-form-inline .ant-form-item {
+    margin-right: 0 !important;
+    margin-bottom: 8px !important;
+  }
+  /* 按钮组间距 */
+  .ant-space {
+    flex-wrap: wrap;
+  }
+  /* Modal 全屏 */
+  .ant-modal {
+    max-width: 95vw !important;
+    margin: 0 auto !important;
+  }
+}
+
+/* 超小屏 (< 480px) */
+@media (max-width: 480px) {
+  h2 {
+    font-size: 16px !important;
+  }
+  .ant-table-thead > tr > th,
+  .ant-table-tbody > tr > td {
+    padding: 6px 8px !important;
+    font-size: 12px !important;
+  }
+}
+
+/* 横屏 (768px - 1024px) */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .ant-col {
+    flex: 0 0 50%;
+    max-width: 50%;
+  }
+}
+
+/* 命令面板在移动端全屏 */
+@media (max-width: 768px) {
+  .command-palette-modal .ant-modal {
+    width: 100% !important;
+    max-width: 100vw !important;
+    top: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+}
+
+/* 主题暗色适配 (后续可扩展) */
+@media (prefers-color-scheme: dark) {
+  /* 留作 Sprint6 切换主题时实现 */
+}

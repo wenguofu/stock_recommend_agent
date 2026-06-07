@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 """数据库模型定义"""
 
+import logging
+logger = logging.getLogger(__name__)
+
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, Text, DateTime, Float
 from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.ext.declarative import declarative_base
@@ -274,7 +277,8 @@ class PaperOrder(Base):
     order_type = Column(String(10), default='market')  # 'market', 'limit'
     strategy_run_id = Column(String(64))
     note = Column(Text)
-    created_at = Column(DateTime, default=datetime.now)
+    client_order_id = Column(String(64), index=True)  # 客户端幂等键(防双提交)
+    created_at = Column(DateTime, default=datetime.now, index=True)
 
 class PaperSnapshot(Base):
     """模拟盘快照表"""
@@ -495,7 +499,78 @@ class MarketAlertLog(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 
+class LLMUsage(Base):
+    """LLM 调用 token 消耗记录 — Sprint3 修复 ai_service 不记账"""
+    __tablename__ = 'llm_usage'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    provider = Column(String(20), nullable=False, index=True)
+    model = Column(String(64), nullable=False, index=True)
+    prompt_tokens = Column(Integer, default=0)
+    completion_tokens = Column(Integer, default=0)
+    total_tokens = Column(Integer, default=0)
+    cost_usd = Column(Float, default=0.0)               # 估算成本
+    job_id = Column(String(64), index=True)            # 可选: 关联辩论 job
+    called_at = Column(DateTime, default=datetime.now, index=True)
+
+
+class ModelVersion(Base):
+    """Sprint4: 模型注册表 (Model Registry)
+    - 记录每个训练产出的版本: sha256/mtime/metrics/dataset_hash
+    - 标记 active 版本供 ml_predictor.load() 选择
+    - A/B 影子模式: 第二个 active_shadow 字段
+    """
+    __tablename__ = 'model_versions'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_id = Column(String(64), nullable=False, index=True)  # e.g. "short_term", "mid_term", "regime"
+    version = Column(String(32), nullable=False)               # e.g. "v20250607-001"
+    file_path = Column(String(255), nullable=False)            # checkpoint path
+    sha256 = Column(String(64), nullable=False, index=True)
+    file_size = Column(Integer, default=0)
+    num_features = Column(Integer)
+    metrics_json = Column(Text)                                # {"acc":0.6, "ic":0.04, ...}
+    dataset_hash = Column(String(64))                          # 训练集指纹
+    is_active = Column(Boolean, default=False, index=True)     # 当前生产版本
+    is_shadow = Column(Boolean, default=False, index=True)     # 影子版本(只记录不决策)
+    created_at = Column(DateTime, default=datetime.now, index=True)
+    promoted_at = Column(DateTime)
+    notes = Column(Text)
+
+
+
 # ═══════════════════════════════════════════════════════════════
 # 初始化：创建所有表
 # ═══════════════════════════════════════════════════════════════
 Base.metadata.create_all(engine)
+
+
+def ensure_schema():
+    """
+    启动时检查并补充缺失的列(轻量级 alembic 替代,生产 MySQL 必备)
+    Sprint3: 新增 paper_orders.client_order_id + llm_usage 表
+    """
+    from sqlalchemy import text, inspect
+    inspector = inspect(engine)
+    try:
+        cols = {c["name"] for c in inspector.get_columns("paper_orders")}
+        if "client_order_id" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE paper_orders ADD COLUMN client_order_id VARCHAR(64)"))
+                conn.execute(text("CREATE INDEX ix_paper_orders_client_order_id ON paper_orders (client_order_id)"))
+            logger.info("[Schema] 已补 paper_orders.client_order_id 列")
+    except Exception as e:
+        logger.warning(f"[Schema] 检查 paper_orders 失败: {e}")
+    try:
+        cols = {c["name"] for c in inspector.get_columns("paper_orders")}
+        if "created_at" in cols:
+            # 检查是否有索引
+            idx = {i["name"] for i in inspector.get_indexes("paper_orders")}
+            if "ix_paper_orders_created_at" not in idx:
+                with engine.begin() as conn:
+                    conn.execute(text("CREATE INDEX ix_paper_orders_created_at ON paper_orders (created_at)"))
+    except Exception:
+        pass
+
+
+ensure_schema()

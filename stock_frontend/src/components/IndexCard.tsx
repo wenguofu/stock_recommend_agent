@@ -1,5 +1,6 @@
 import { Card, Statistic, Skeleton } from 'antd';
 import { ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons';
+import { stockUpColor, stockDownColor } from '../constants/tokens';
 
 export interface IndexData {
   current_price?: number;
@@ -43,10 +44,10 @@ export default function IndexCard({ title, data, isLoading, color }: IndexCardPr
         value={data.current_price}
         precision={2}
         formatter={(val) => (val as number).toFixed(2)}
-        valueStyle={{ color: isUp ? '#cf1322' : '#3f8600', fontSize: 28 }}
+        valueStyle={{ color: isUp ? stockUpColor : stockDownColor, fontSize: 28 }}
         prefix={isUp ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
         suffix={
-          <span style={{ fontSize: 16, color: isUp ? '#cf1322' : '#3f8600' }}>
+          <span style={{ fontSize: 16, color: isUp ? stockUpColor : stockDownColor }}>
             {isUp ? '+' : ''}{changePercent.toFixed(2)}%
           </span>
         }

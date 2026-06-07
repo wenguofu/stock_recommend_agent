@@ -66,6 +66,19 @@ export default function StockDetail() {
     enabled: !!codeStr,
   });
 
+  // 股票画像与机构预测
+  const { data: profileData } = useQuery({
+    queryKey: ['stockProfile', codeStr],
+    queryFn: () => stockAPI.getStockProfile(codeStr),
+    enabled: !!codeStr,
+  });
+
+  const { data: analystData } = useQuery({
+    queryKey: ['analystPredictions', codeStr],
+    queryFn: () => stockAPI.getAnalystPredictions(codeStr),
+    enabled: !!codeStr,
+  });
+
   const positionCost = watchlistData?.cost_price;
   const positionShares = watchlistData?.shares;
   const hasPosition =
@@ -410,6 +423,74 @@ export default function StockDetail() {
                 )}
               </Descriptions>
             </Card>
+          )}
+          {profileData?.main_business && (
+            <Card title="主营业务" size="small" style={{ marginTop: 16 }}>
+              <Text style={{ fontSize: 13, lineHeight: 1.8 }}>{profileData.main_business}</Text>
+            </Card>
+          )}
+          {profileData?.sector_themes && (
+            <Card title="热门题材" size="small" style={{ marginTop: 16 }}>
+              {profileData.sector_themes.split(',').map((theme: string, i: number) => {
+                const [name, pct] = theme.trim().split(/\s+/);
+                const pctVal = parseFloat(pct);
+                return pct ? (
+                  <Tag key={i} color={pctVal >= 0 ? 'green' : 'red'} style={{ margin: '2px 4px' }}>
+                    {name} {pctVal >= 0 ? '+' : ''}{pct}
+                  </Tag>
+                ) : null;
+              })}
+            </Card>
+          )}
+          {profileData?.core_competitiveness && (
+            <Card title="核心竞争力" size="small" style={{ marginTop: 16 }}>
+              {profileData.core_competitiveness.split(/\s{2,}/).filter(Boolean).map((line: string, i: number) => (
+                <div key={i} style={{ fontSize: 12, marginBottom: 4 }}>{line.trim()}</div>
+              ))}
+            </Card>
+          )}
+          {analystData && (
+            <>
+              <Card title="机构预测" size="small" style={{ marginTop: 16 }}>
+                <Row gutter={16}>
+                  <Col span={6}>
+                    <Statistic title="2026E EPS" value={analystData.eps_2026e || '--'} suffix="元" />
+                  </Col>
+                  <Col span={6}>
+                    <Statistic title="2026E 净利润" value={analystData.net_profit_2026e || '--'} />
+                  </Col>
+                  <Col span={6}>
+                    <Statistic title="2026E 营收" value={analystData.revenue_2026e || '--'} />
+                  </Col>
+                  <Col span={6}>
+                    <Statistic title="2026E ROE" value={analystData.roe_2026e || '--'} />
+                  </Col>
+                </Row>
+                <div style={{ marginTop: 12 }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    综合评级: <Tag color="green">{analystData.rating_label} ({analystData.rating_score})</Tag>
+                    {' '}覆盖机构: {analystData.analyst_count} 家
+                    {' '}平均PE: {analystData.avg_pe_ttm}x
+                  </Text>
+                </div>
+                {analystData.details && analystData.details.length > 0 && (
+                  <Table
+                    size="small"
+                    style={{ marginTop: 12 }}
+                    columns={[
+                      { title: '机构', dataIndex: 'institution', width: 120, ellipsis: true },
+                      { title: '评级', dataIndex: 'rating', width: 60, render: (v: string) => <Tag color="green">{v}</Tag> },
+                      { title: '2026E', dataIndex: 'eps_2026e', width: 80, render: (v: string) => v || '--' },
+                      { title: '2027E', dataIndex: 'eps_2027e', width: 80, render: (v: string) => v || '--' },
+                      { title: '2026E PE', dataIndex: 'pe_2026e', width: 80, render: (v: string) => v || '--' },
+                    ]}
+                    dataSource={analystData.details.slice(0, 6)}
+                    pagination={false}
+                    scroll={{ x: 400 }}
+                  />
+                )}
+              </Card>
+            </>
           )}
         </Card>
       ) : (

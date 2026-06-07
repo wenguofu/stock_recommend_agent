@@ -8,10 +8,12 @@
 
 import logging
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 
 logger = logging.getLogger('paper_trading')
+
+from business_config import cfg  # 业务配置中心化 (Sprint3)
 
 from models import (
     SessionLocal,
@@ -85,7 +87,7 @@ def _get_etf_replacement(db, code: str, account: PaperAccount) -> Optional[Dict]
                 "original_name": "",
             }
         except Exception as e:
-            print(f"[PaperTrading] 自动创建ETF映射失败 {code}: {e}")
+            logger.warning(f"[PaperTrading] 自动创建ETF映射失败 {code}: {e}")
             return None
 
     return None
@@ -133,22 +135,53 @@ def create_order(
     order_type: str = "manual",
     strategy_run_id: Optional[str] = None,
     note: Optional[str] = None,
+    client_order_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     创建模拟盘交易订单。
 
     处理流程：
+      0. 客户端去重: 若传 client_order_id, 在 DEDUP_WINDOW 秒内命中既有订单则幂等返回
       1. ETF 替代检查（688 开头科创板股票）
       2. 买入：计算佣金、检查余额、更新持仓
       3. 卖出：检查持仓、计算佣金和印花税、更新现金和持仓
       4. 记录订单、更新账户总市值和收益率
+      5. 关键行加 SELECT ... FOR UPDATE 防止并发超扣
 
     返回 {"order": ..., "account": ..., "position": ...}
     """
+    # ── 客户端去重 (幂等) ──
+    DEDUP_WINDOW_SEC = 60  # 60 秒内同 client_order_id 视为重复
+    if client_order_id:
+        db = SessionLocal()
+        try:
+            existing = db.query(PaperOrder).filter(
+                PaperOrder.account_id == account_id,
+                PaperOrder.client_order_id == client_order_id,
+                PaperOrder.created_at >= datetime.now() - timedelta(seconds=DEDUP_WINDOW_SEC),
+            ).order_by(PaperOrder.id.desc()).first()
+            if existing:
+                logger.info(f"订单去重命中: client_order_id={client_order_id} → order_id={existing.id}")
+                position = db.query(PaperPosition).filter(
+                    PaperPosition.account_id == account_id,
+                    PaperPosition.code == existing.code,
+                ).first()
+                account = db.query(PaperAccount).filter(PaperAccount.id == account_id).first()
+                return {
+                    "order": _to_dict(existing),
+                    "account": _to_dict(account) if account else None,
+                    "position": _to_dict(position) if position else None,
+                    "deduplicated": True,
+                }
+        finally:
+            db.close()
+
     db = SessionLocal()
     try:
-        # ── 加载账户 ──
-        account = db.query(PaperAccount).filter(PaperAccount.id == account_id).first()
+        # ── 加载账户 (行锁, 防并发超扣) ──
+        account = db.query(PaperAccount).filter(
+            PaperAccount.id == account_id
+        ).with_for_update().first()
         if not account:
             raise ValueError(f"模拟盘账户不存在: {account_id}")
 
@@ -187,7 +220,7 @@ def create_order(
             raise
         except Exception as e:
             # 网络异常时放宽检查，但记录警告
-            print(f"[警告] 实盘价格验证失败，跳过检查: {e}")
+            logger.warning(f"[警告] 实盘价格验证失败，跳过检查: {e}")
 
         # === AI Risk Control: Hard constraint validation ===
         try:
@@ -235,17 +268,27 @@ def create_order(
                         'warnings': result.warnings,
                     }
         except ImportError as e:
-            logger.debug(f"Risk control not available: {e}")
+            # ImportError: 风控模块未安装,默认 fail-closed,阻断订单
+            logger.error(f"Risk control module import failed (BLOCKING order): {e}")
+            return {
+                'success': False,
+                'error': f'Risk control unavailable: {e}. Order blocked for safety.',
+            }
         except Exception as e:
-            logger.warning(f"Risk control check failed (allowing order): {e}")
+            # Runtime error: fail-closed 模式,阻断订单并告警
+            logger.error(f"Risk control check failed (BLOCKING order): {e}", exc_info=True)
+            return {
+                'success': False,
+                'error': f'Risk control check failed: {e}. Order blocked for safety.',
+            }
         # === End AI Risk Control ===
 
         # ── 计算费用 ──
         amount = price * quantity
 
         if direction == "buy":
-            # 买入：万2.5佣金，最低5元，无印花税
-            commission = max(amount * 0.00025, 5.0)
+            # 买入：万2.5佣金(由 business_config 中心化), 最低5元, 无印花税
+            commission = max(amount * cfg.trading.commission_rate, cfg.trading.commission_min)
             tax = 0.0
             total_cost = amount + commission
 
@@ -257,11 +300,11 @@ def create_order(
             # 扣减现金
             account.cash_balance -= total_cost
 
-            # ── 查找或创建持仓 ──
+            # ── 查找或创建持仓 (行锁, 防并发) ──
             position = db.query(PaperPosition).filter(
                 PaperPosition.account_id == account_id,
                 PaperPosition.code == effective_code,
-            ).first()
+            ).with_for_update().first()
 
             if position:
                 # 更新平均成本：加权平均
@@ -297,7 +340,7 @@ def create_order(
             position = db.query(PaperPosition).filter(
                 PaperPosition.account_id == account_id,
                 PaperPosition.code == effective_code,
-            ).first()
+            ).with_for_update().first()
 
             if not position:
                 raise ValueError(f"未找到持仓: {effective_code}")
@@ -306,8 +349,8 @@ def create_order(
                     f"持仓不足：需要 {quantity} 股，当前 {position.shares} 股"
                 )
 
-            commission = max(amount * 0.00025, 5.0)
-            tax = amount * 0.001  # 印花税
+            commission = max(amount * cfg.trading.commission_rate, cfg.trading.commission_min)
+            tax = amount * cfg.trading.stamp_tax_rate  # 印花税
             total_income = amount - commission - tax
 
             # 增加现金
@@ -348,6 +391,7 @@ def create_order(
             order_type=order_type,
             strategy_run_id=strategy_run_id,
             note=note,
+            client_order_id=client_order_id,
         )
         db.add(order)
         db.flush()
@@ -776,7 +820,7 @@ def _refresh_positions_prices(db, account_id: int) -> int:
             # data_fetchers 不可用，静默跳过
             continue
         except Exception as e:
-            print(f"[PaperTrading] 刷新价格失败 {pos.code}: {e}")
+            logger.warning(f"[PaperTrading] 刷新价格失败 {pos.code}: {e}")
             continue
 
     # 更新账户总市值

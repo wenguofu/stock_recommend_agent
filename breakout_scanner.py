@@ -284,6 +284,7 @@ def format_report(results, top_n=20):
 
 
 def main():
+    """修复 BUG-11: 返回 dict 而非 print/exit, 供模块化调用"""
     os.makedirs(EVAL_DIR, exist_ok=True)
     args = sys.argv[1:]
 
@@ -298,26 +299,31 @@ def main():
     if target_code:
         kline = get_daily_kline(target_code, 180)
         if not kline:
-            print(f"❌ 无法获取 {target_code} 的K线数据")
-            return
+            return {"success": False, "error": f"无法获取 {target_code} 的K线数据"}
         info = api_get(f"/api/sina/realtime/{target_code}")
         name = info.get("name", target_code) if info else target_code
         cons = detect_consolidation(kline)
-        if cons:
-            print(f"✅ {name}({target_code}) 检测到横盘突破形态")
-            print(f"   横盘天/振幅/突破日/涨幅... 见详细报告")
-        else:
-            print(f"❌ {name}({target_code}) 不满足横盘突破条件")
-        return
+        return {
+            "success": True,
+            "code": target_code,
+            "name": name,
+            "breakout_detected": bool(cons),
+            "details": cons or {},
+        }
 
     results = scan_all()
     report = format_report(results, top_n)
-    print(report)
 
     path = os.path.join(EVAL_DIR, f"突破扫描_{datetime.now().strftime('%Y%m%d')}.md")
     with open(path, "w", encoding="utf-8") as f:
         f.write(report)
-    print(f"\n✅ 报告已保存: {path}")
+    return {
+        "success": True,
+        "report": report,
+        "report_path": path,
+        "results": results,
+        "top_n": top_n,
+    }
 
 
 if __name__ == "__main__":

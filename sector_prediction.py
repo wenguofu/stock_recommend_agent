@@ -422,7 +422,7 @@ def format_report(results: List[dict], date: str = None) -> str:
 
 
 def main():
-    """主入口"""
+    """主入口 — 修复 BUG-11: 返回 dict 而非 print/exit, 供模块化调用"""
     os.makedirs(EVAL_DIR, exist_ok=True)
 
     # 加载最新板块数据
@@ -432,8 +432,7 @@ def main():
     )
 
     if not json_files:
-        print("❌ 没有板块数据。请先运行: uv run python sector_import.py")
-        sys.exit(1)
+        return {"success": False, "error": "没有板块数据。请先运行 sector_import.py"}
 
     # 支持 --sector 参数单独分析
     target_sector = None
@@ -455,8 +454,7 @@ def main():
                     if target_sector in s.get("name", ""):
                         all_sectors.append(s)
         if not all_sectors:
-            print(f"❌ 未找到板块: {target_sector}")
-            sys.exit(1)
+            return {"success": False, "error": f"未找到板块: {target_sector}"}
         sector = all_sectors[0]  # 取最新一次
         result = compute_total_score(sector)
         gates_passed, gate_msgs = run_verification_gates(result)
@@ -473,13 +471,18 @@ def main():
         results = predict_sectors(day_data.get("sectors", []))
 
     report = format_report(results, date_str)
-    print(report)
 
     # 保存
     report_path = os.path.join(EVAL_DIR, f"主线预判_{datetime.now().strftime('%Y%m%d')}.md")
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(report)
-    print(f"\n✅ 预判报告已保存: {report_path}")
+    return {
+        "success": True,
+        "report": report,
+        "report_path": report_path,
+        "results": results,
+        "date": date_str,
+    }
 
 
 if __name__ == "__main__":

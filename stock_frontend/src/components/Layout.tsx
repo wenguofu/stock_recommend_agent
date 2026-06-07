@@ -1,11 +1,13 @@
 import { ReactNode, useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Layout as AntLayout, Menu, Segmented, Typography, theme } from 'antd';
+import { Layout as AntLayout, Menu, Segmented, Typography, theme, Button, Tooltip } from 'antd';
+import { SearchOutlined } from '@ant-design/icons';
+import CommandPalette from './CommandPalette';
 import {
   HomeOutlined, StarOutlined, ExperimentOutlined, ThunderboltOutlined,
   BarChartOutlined, SettingOutlined, OrderedListOutlined, TrophyOutlined,
   ScheduleOutlined, LineChartOutlined, AimOutlined, BulbOutlined,
-  SafetyOutlined,
+  SafetyOutlined, MonitorOutlined, AlertOutlined,
 } from '@ant-design/icons';
 
 const { Sider, Content } = AntLayout;
@@ -26,8 +28,13 @@ const QUANT_NAV = [
   { path: '/strategies', label: '策略库', icon: <OrderedListOutlined /> },
   { path: '/strategy', label: '策略推荐', icon: <ThunderboltOutlined /> },
   { path: '/backtest', label: '回测', icon: <BarChartOutlined /> },
+  { path: '/sensitivity', label: '敏感度扫描', icon: <ExperimentOutlined /> },
+  { path: '/portfolio', label: '组合优化', icon: <ExperimentOutlined /> },
   { path: '/sector-prediction', label: '主线预判', icon: <AimOutlined /> },
-  { path: '/settings', label: '配置', icon: <SettingOutlined /> },
+  { path: '/monitoring', label: 'ML 监控', icon: <MonitorOutlined /> },
+  { path: '/alerts', label: '告警', icon: <AlertOutlined /> },
+  { path: '/strategy-config', label: '策略配置', icon: <SettingOutlined /> },
+  { path: '/settings', label: '系统配置', icon: <SettingOutlined /> },
 ];
 
 const MIDLINE_NAV = [
@@ -63,6 +70,8 @@ export default function Layout({ children }: LayoutProps) {
     setStrategy(s);
     navigate(s === 'midline' ? '/midline' : '/');
   };
+
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   return (
     <AntLayout style={{ minHeight: '100vh' }}>
@@ -111,10 +120,34 @@ export default function Layout({ children }: LayoutProps) {
       </Sider>
 
       <AntLayout>
+        <div style={{
+          padding: '8px 24px',
+          background: token.colorBgContainer,
+          borderBottom: `1px solid ${token.colorBorderSecondary}`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}>
+          <Tooltip title="打开命令面板 (⌘K)">
+            <Button
+              type="text"
+              icon={<SearchOutlined />}
+              onClick={() => setPaletteOpen(true)}
+            >
+              <span style={{ color: token.colorTextTertiary, marginLeft: 6 }}>搜索 ⌘K</span>
+            </Button>
+          </Tooltip>
+          <Text type="secondary" style={{ fontSize: 12 }}>v2.0 · ML-Enhanced</Text>
+        </div>
         <Content style={{ padding: 24, background: token.colorBgLayout, minHeight: '100vh' }}>
           {children}
         </Content>
       </AntLayout>
+      <CommandPalette
+        enabled={false}
+        externalOpen={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+      />
     </AntLayout>
   );
 }

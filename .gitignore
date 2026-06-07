@@ -75,6 +75,13 @@ test_*.py
 *_test.py
 tests/
 !tests/
+# 但允许 tests/ 下的测试文件 (test_*.py 在根目录才忽略, 嵌套在 tests/ 下保留)
+!tests/test_*.py
+!tests/**/test_*.py
+
+# E2E test artifacts (Sprint 6: 不要提交测试图片和报告)
+tests/e2e/screenshots/
+tests/e2e/reports/
 
 # Output files
 *.txt

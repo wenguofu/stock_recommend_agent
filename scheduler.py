@@ -549,8 +549,13 @@ class TaskScheduler:
         return True
 
     def _run_task(self, task):
-        """执行单个任务"""
+        """执行单个任务(带 in-flight 锁,避免并发重入)"""
         task_name = task['name']
+        # 修复 BUG-05: 任务级 in-flight 锁,避免定时+手动触发并发
+        if task.get('_in_flight'):
+            self._log(f"⏸ {task_name}: 已在执行中,跳过本次触发")
+            return False
+        task['_in_flight'] = True
         self._log(f"▶ 开始执行: {task_name}")
         try:
             output = task['func']()
@@ -567,6 +572,8 @@ class TaskScheduler:
         finally:
             task['last_run'] = time.time()
             task['run_count'] += 1
+            task['_in_flight'] = False
+        return True
 
     def _loop(self):
         """主循环"""
@@ -621,7 +628,16 @@ class TaskScheduler:
         """手动触发执行某个任务（供API调用）"""
         for task in self.tasks:
             if task['name'] == name_or_index:
-                self._run_task(task)
+                # 修复 BUG-05: 手动触发时若任务正在执行,返 409 而非并发重入
+                if task.get('_in_flight'):
+                    return {
+                        "success": False,
+                        "error": f"任务 {task['name']} 正在执行中,请稍后再试",
+                        "in_flight": True,
+                    }
+                result = self._run_task(task)
+                if result is False:
+                    return {"success": False, "error": "任务被跳过(并发或时段限制)"}
                 return {"success": True, "name": task['name']}
         return {"success": False, "error": f"未找到任务: {name_or_index}"}
 

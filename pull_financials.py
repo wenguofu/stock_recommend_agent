@@ -3,6 +3,10 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+logger = logging.getLogger(__name__)
+
 from fundamental_data import fetch_and_cache
 
 watchlist = ['300433', '300259', '300136', '300679', '600150', '002407', '301696', '002436', '600487']
@@ -15,4 +19,4 @@ for code in watchlist:
         else:
             print(f"{code}: ❌ API返回空")
     except Exception as e:
-        print(f"{code}: ❌ {str(e)[:120]}")
+        logger.error(f"{code}: ❌ {str(e)[:120]}", exc_info=False)

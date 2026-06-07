@@ -80,9 +80,10 @@ export default function Watchlist() {
   }, [showMultiModal, agents, selectedAgentIds.length]);
 
   // Paginated watchlist data
-  const { data: watchlistPage, isLoading } = useQuery({
+  const { data: watchlistPage, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['watchlist', page, pageSize],
     queryFn: () => fetch(`${API}/api/watchlist?page=${page}&pageSize=${pageSize}`).then(r => r.json()),
+    retry: 2,
   });
   const items = watchlistPage?.data || [];
   const total = watchlistPage?.total || 0;
@@ -364,7 +365,20 @@ export default function Watchlist() {
       {/* Watchlist Table */}
       <Card title="我的自选">
         <Spin spinning={isLoading}>
-          {items.length === 0 && !isLoading ? (
+          {isError ? (
+            // 修复 BUG-UX-07: 加载失败时区分"无数据"和"加载失败",给用户重试入口
+            <div style={{ padding: 24, textAlign: 'center' }}>
+              <Alert
+                type="error"
+                showIcon
+                message="自选股加载失败"
+                description={(error as Error)?.message || '请检查后端服务是否运行,或稍后重试'}
+                action={
+                  <Button size="small" onClick={() => refetch()}>重试</Button>
+                }
+              />
+            </div>
+          ) : items.length === 0 && !isLoading ? (
             <div style={{ textAlign: 'center', padding: 32, color: '#999' }}>暂无自选股</div>
           ) : (
             <Table

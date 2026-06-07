@@ -25,6 +25,8 @@ import pandas as pd
 from datetime import datetime, date, timedelta
 import json
 import re
+import logging
+logger = logging.getLogger(__name__)
 from data_fetchers import get_realtime_data, get_timeline_data, get_minute_kline, get_daily_kline, get_money_flow, get_money_flow_history, get_money_flow_realtime_kline, get_fundamental_data, get_industry_comparison, get_news_from_stock, get_guba_posts
 from data_formatters import format_for_ai, to_json
 from technical_indicators import get_comprehensive_data_with_indicators, get_comprehensive_data
@@ -55,7 +57,11 @@ from batch_backtest import batch_backtest, format_batch_result
 
 def register_routes(app):
     """注册所有API路由"""
-    
+    # 修复 ARCH-07: 装饰器挂载到 LLM/重计算端点,防止暴力刷
+    from rate_limiter import rate_limit
+    # 修复 ARCH-02: 统一响应格式装饰器(端点可渐进式迁移)
+    from error_handler import json_endpoint
+
     @app.route('/')
     def index():
         """首页 - 股票分析门户"""
@@ -115,574 +121,100 @@ def register_routes(app):
 
     @app.route('/api/health')
     def health():
-        """健康检查"""
-        return jsonify({
+        """健康检查(深检) — 修复 ARCH-06: 查 DB 连通性、外部 API 可达性、调度器状态、磁盘空间
+
+        注: 不使用 @json_endpoint 是因为此端点需要返 503 状态码(degraded 场景),
+        装饰器统一返 200, 不符合语义.
+        """
+        import shutil
+        health_status = {
             'status': 'ok',
             'timestamp': datetime.now().isoformat(),
-            'service': '新浪股票API服务'
-        })
+            'service': '新浪股票API服务',
+            'checks': {},
+        }
+        overall_ok = True
 
-    @app.route('/api/sina/comprehensive/<code>')
-    def get_sina_comprehensive(code):
-        """获取股票的综合数据"""
+        # ── 1. DB 连通性 ──
         try:
-            code_str = str(code).strip()
-            if not is_valid_stock_code(code_str):
-                return jsonify({'error': '股票代码格式错误', 'message': '股票代码应为6位数字(A股)或1-5位字母(美股)，如 000001 或 AAPL'}), 400
-            
-            print(f"[API] 获取综合数据，股票代码: {code_str}")
-            data = get_comprehensive_data(code_str)
-            result = to_json(data)
-            
-            response = jsonify(result)
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取综合数据失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
-
-    @app.route('/api/sina/comprehensive_with_indicators/<code>')
-    def get_sina_comprehensive_with_indicators(code):
-        """获取股票的综合数据（包含技术指标）"""
-        try:
-            code_str = str(code).strip()
-            if not is_valid_stock_code(code_str):
-                return jsonify({'error': '股票代码格式错误', 'message': '股票代码应为6位数字(A股)或1-5位字母(美股)，如 000001 或 AAPL'}), 400
-            
-            print(f"[API] 获取综合数据（含技术指标），股票代码: {code_str}")
-            data = get_comprehensive_data_with_indicators(code_str)
-            result = to_json(data)
-            
-            response = jsonify(result)
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取综合数据失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
-
-    @app.route('/api/sina/realtime/<code>')
-    def get_sina_realtime(code):
-        """获取实时行情数据"""
-        try:
-            code_str = str(code).strip()
-            # 支持sh/sz格式的代码（如sh000001用于上证指数）
-            if code_str.startswith(('sh', 'sz', 'gb_', '$')):
-                # 直接使用，不需要验证6位数字
-                print(f"[API] 获取实时行情，股票代码: {code_str}")
-                data = get_realtime_data(code_str)
-            elif not is_valid_stock_code(code_str):
-                return jsonify({'error': '股票代码格式错误', 'message': '股票代码应为6位数字(A股)或1-5位字母(美股)，如 000001 或 AAPL'}), 400
-            else:
-                print(f"[API] 获取实时行情，股票代码: {code_str}")
-                data = get_realtime_data(code_str)
-            
-            if data is None:
-                return jsonify({'error': '获取数据失败', 'message': '无法获取实时行情数据'}), 500
-            
-            response = jsonify(data)
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取实时行情失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
-
-    @app.route('/api/sina/timeline/<code>')
-    def get_sina_timeline(code):
-        """获取分时数据（每分钟的数据点）"""
-        try:
-            code_str = str(code).strip()
-            if not is_valid_stock_code(code_str):
-                return jsonify({'error': '股票代码格式错误', 'message': '股票代码应为6位数字(A股)或1-5位字母(美股)，如 000001 或 AAPL'}), 400
-            
-            print(f"[API] 获取分时数据，股票代码: {code_str}")
-            df = get_timeline_data(code_str)
-            
-            if df is None or len(df) == 0:
-                return jsonify({'code': code_str, 'data': [], 'count': 0})
-            
-            records = df.to_dict('records')
-            for record in records:
-                for key, value in record.items():
-                    if pd.isna(value):
-                        record[key] = None
-                    elif isinstance(value, pd.Timestamp):
-                        record[key] = value.strftime('%Y-%m-%d %H:%M:%S')
-            
-            response = jsonify({'code': code_str, 'data': records, 'count': len(records)})
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取分时数据失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
-
-    @app.route('/api/sina/minute/<code>')
-    def get_sina_minute(code):
-        """获取分钟K线数据"""
-        try:
-            code_str = str(code).strip()
-            if not is_valid_stock_code(code_str):
-                return jsonify({'error': '股票代码格式错误', 'message': '股票代码应为6位数字(A股)或1-5位字母(美股)，如 000001 或 AAPL'}), 400
-            
-            scale = int(request.args.get('scale', 5))
-            datalen = int(request.args.get('datalen', 240))
-            
-            if scale not in [5, 15, 30, 60]:
-                return jsonify({'error': '参数错误', 'message': 'scale参数应为 5, 15, 30, 60 之一'}), 400
-            
-            print(f"[API] 获取分钟K线，股票代码: {code_str}, scale: {scale}, datalen: {datalen}")
-            df = get_minute_kline(code_str, scale=scale, datalen=datalen)
-            
-            if df is None or len(df) == 0:
-                return jsonify({'code': code_str, 'scale': scale, 'data': [], 'count': 0})
-            
-            records = df.to_dict('records')
-            for record in records:
-                for key, value in record.items():
-                    if pd.isna(value):
-                        record[key] = None
-                    elif isinstance(value, pd.Timestamp):
-                        record[key] = value.strftime('%Y-%m-%d %H:%M:%S')
-            
-            response = jsonify({'code': code_str, 'scale': scale, 'data': records, 'count': len(records)})
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取分钟K线失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
-
-    @app.route('/api/sina/daily/<code>')
-    def get_sina_daily(code):
-        """获取日K线数据（缓存优先，当天数据从新浪补充）"""
-        try:
-            code_str = str(code).strip()
-            if not is_valid_stock_code(code_str):
-                return jsonify({'error': '股票代码格式错误', 'message': '股票代码应为6位数字(A股)或1-5位字母(美股)，如 000001 或 AAPL'}), 400
-            
-            count = int(request.args.get('count', 240))
-            print(f"[API] 获取日K线，股票代码: {code_str}, count: {count}")
-            
-            from db import get_kline_cache, save_kline_cache_batch
-            from models import get_db as _get_db
-            from datetime import date as date_type
-            
-            today_str = date_type.today().strftime('%Y-%m-%d')
-            records = []
-            from_cache = False
-            
-            # 1. 从本地缓存读取
-            db = next(_get_db())
+            from models import SessionLocal
+            from sqlalchemy import text
+            db = SessionLocal()
             try:
-                cached = get_kline_cache(db, code_str, limit=count)
-                if cached and len(cached) >= 20:
-                    records = []
-                    for r in cached:
-                        d = r.get('date', '')
-                        if not d:
-                            continue
-                        records.append({
-                            'day': d,
-                            'open': r.get('open'), 'high': r.get('high'),
-                            'low': r.get('low'), 'close': r.get('close'),
-                            'volume': r.get('volume'), 'amount': r.get('amount'),
-                        })
-                    records.sort(key=lambda r: r['day'])
-                    if not records:
-                        print(f"[API] 缓存数据全部无效: {code_str}")
-                    else:
-                        records.sort(key=lambda r: r.get('day', ''))
-                        from_cache = True
-                        print(f"[API] 日K线命中缓存: {code_str}, {len(records)}条，最新日期: {records[-1]['day']}")
+                db.execute(text("SELECT 1"))
+                health_status['checks']['database'] = {'ok': True}
             finally:
                 db.close()
-            
-            # 2. 判断是否需要补充当天数据
-            need_today = False
-            if not records:
-                need_today = True  # 无缓存，需要全部拉取
-            elif records[-1]['day'] < today_str:
-                need_today = True  # 缓存最新日期不是今天
-                print(f"[API] 缓存缺少当天数据({today_str})，将从远程补充")
-            
-            if need_today:
-                # 从远程获取
-                print(f"[API] 日K线远程获取: {code_str}")
-                df = get_daily_kline(code_str, count=count)
-                
-                if df is not None and len(df) > 0:
-                    new_records = df.to_dict('records')
-                    for record in new_records:
-                        for key, value in record.items():
-                            if pd.isna(value):
-                                record[key] = None
-                            elif isinstance(value, pd.Timestamp):
-                                record[key] = value.strftime('%Y-%m-%d')
-                    
-                    if from_cache:
-                        # 合并缓存+新数据，去重
-                        existing_days = {r['day'] for r in records}
-                        for r in new_records:
-                            day_key = r.get('day') or r.get('date')
-                            if day_key and day_key not in existing_days:
-                                r['day'] = day_key
-                                records.append(r)
-                        records.sort(key=lambda r: r.get('day', ''))
-                        print(f"[API] 合并后共 {len(records)} 条")
-                        
-                        # 写入新数据到缓存
-                        try:
-                            db2 = next(_get_db())
-                            try:
-                                save_kline_cache_batch(db2, code_str, new_records)
-                                print(f"[API] 新数据已写入缓存: {len(new_records)}条")
-                            finally:
-                                db2.close()
-                        except Exception as ce:
-                            print(f"[API] 写入缓存失败: {ce}")
-                    else:
-                        records = new_records
-                        # 统一为 day 字段
-                        for r in records:
-                            if 'day' not in r and 'date' in r:
-                                r['day'] = r['date']
-                        records.sort(key=lambda r: r.get('day', ''))
-                        # 全部写入缓存
-                        try:
-                            db2 = next(_get_db())
-                            try:
-                                save_kline_cache_batch(db2, code_str, records)
-                                print(f"[API] 已全部写入缓存: {len(records)}条")
-                            finally:
-                                db2.close()
-                        except Exception as ce:
-                            print(f"[API] 写入缓存失败: {ce}")
-            
-            if not records:
-                return jsonify({'code': code_str, 'data': [], 'count': 0})
-            
-            response = jsonify({'code': code_str, 'data': records, 'count': len(records), 'cached': from_cache})
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
         except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取日K线失败: {error_msg}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
+            health_status['checks']['database'] = {'ok': False, 'error': str(e)}
+            overall_ok = False
 
-    @app.route('/api/sina/money_flow/<code>')
-    def get_sina_money_flow(code):
-        """获取今日资金流向数据"""
+        # ── 2. 外部 API ping (新浪/腾讯, 3s timeout) ──
         try:
-            code_str = str(code).strip()
-            if not is_valid_stock_code(code_str):
-                return jsonify({'error': '股票代码格式错误', 'message': '股票代码应为6位数字(A股)或1-5位字母(美股)，如 000001 或 AAPL'}), 400
-            
-            print(f"[API] 获取资金流向，股票代码: {code_str}")
-            data = get_money_flow(code_str)
-            
-            response = jsonify(data)
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取资金流向失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
-
-    @app.route('/api/sina/money_flow/history/<code>')
-    def get_sina_money_flow_history(code):
-        """获取历史资金流向数据（日线）"""
-        try:
-            code_str = str(code).strip()
-            if not is_valid_stock_code(code_str):
-                return jsonify({'error': '股票代码格式错误', 'message': '股票代码应为6位数字(A股)或1-5位字母(美股)，如 000001 或 AAPL'}), 400
-            
-            days = int(request.args.get('days', 60))  # 默认60天
-            
-            print(f"[API] 获取历史资金流向，股票代码: {code_str}, days: {days}")
-            data = get_money_flow_history(code_str, days=days)
-            
-            response = jsonify({
-                'code': code_str,
-                'days': days,
-                'count': len(data),
-                'data': data
-            })
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取历史资金流向失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
-
-    @app.route('/api/sina/money_flow/realtime/<code>')
-    def get_sina_money_flow_realtime(code):
-        """获取实时资金流向分钟线数据"""
-        try:
-            code_str = str(code).strip()
-            if not is_valid_stock_code(code_str):
-                return jsonify({'error': '股票代码格式错误', 'message': '股票代码应为6位数字(A股)或1-5位字母(美股)，如 000001 或 AAPL'}), 400
-            
-            klt = int(request.args.get('klt', 1))  # 1=1分钟，5=5分钟
-            lmt = int(request.args.get('lmt', 0))  # 0=获取所有数据
-            
-            print(f"[API] 获取实时资金流向分钟线，股票代码: {code_str}, klt: {klt}, lmt: {lmt}")
-            data = get_money_flow_realtime_kline(code_str, klt=klt, lmt=lmt)
-            
-            response = jsonify({
-                'code': code_str,
-                'klt': klt,
-                'count': len(data),
-                'data': data
-            })
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取实时资金流向分钟线失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
-
-    @app.route('/api/sina/fundamental/<code>')
-    def get_sina_fundamental(code):
-        """获取股票的基本面数据"""
-        try:
-            code_str = str(code).strip()
-            if not is_valid_stock_code(code_str):
-                return jsonify({'error': '股票代码格式错误', 'message': '股票代码应为6位数字(A股)或1-5位字母(美股)，如 000001 或 AAPL'}), 400
-            
-            print(f"[API] 获取基本面数据，股票代码: {code_str}")
-            data = get_fundamental_data(code_str)
-            
-            response = jsonify(data)
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取基本面数据失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
-
-    @app.route('/api/sina/industry_comparison/<code>')
-    def get_sina_industry_comparison(code):
-        """获取股票的行业对比数据"""
-        try:
-            code_str = str(code).strip()
-            if not is_valid_stock_code(code_str):
-                return jsonify({'error': '股票代码格式错误', 'message': '股票代码应为6位数字(A股)或1-5位字母(美股)，如 000001 或 AAPL'}), 400
-            
-            print(f"[API] 获取行业对比数据，股票代码: {code_str}")
-            data = get_industry_comparison(code_str)
-            
-            response = jsonify(data)
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取行业对比数据失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
-
-    @app.route('/api/sina/for_ai/<code>')
-    def get_sina_for_ai(code):
-        """获取格式化的股票数据，用于AI分析"""
-        try:
-            code_str = str(code).strip()
-            if not is_valid_stock_code(code_str):
-                return jsonify({'error': '股票代码格式错误', 'message': '股票代码应为6位数字(A股)或1-5位字母(美股)，如 000001 或 AAPL'}), 400
-            
-            print(f"[API] 获取AI分析数据，股票代码: {code_str}")
-            data = get_comprehensive_data(code_str)
-            formatted = format_for_ai(data)
-            
-            raw_data = {
-                'realtime': data['realtime'],
-                'timeline_count': len(data['timeline']) if data['timeline'] is not None else 0,
-                'minute_5_count': len(data['minute_5']) if data['minute_5'] is not None else 0,
-                'minute_15_count': len(data['minute_15']) if data['minute_15'] is not None else 0,
-                'minute_30_count': len(data['minute_30']) if data['minute_30'] is not None else 0,
-                'daily_count': len(data['daily']) if data['daily'] is not None else 0,
-                'sector_info': data.get('sector_info', []),
-                'money_flow': data.get('money_flow', {}),
-                'fundamental': data.get('fundamental', {}),
-                'industry_comparison': data.get('industry_comparison', {}),
+            import requests
+            r = requests.get("https://qt.gtimg.cn/q=sh000001", timeout=3)
+            health_status['checks']['tencent_api'] = {
+                'ok': r.status_code == 200,
+                'status_code': r.status_code,
             }
-            
-            response = jsonify({'code': code_str, 'formatted_text': formatted, 'raw_data': raw_data})
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
+            if r.status_code != 200:
+                overall_ok = False
         except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取AI分析数据失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
+            health_status['checks']['tencent_api'] = {'ok': False, 'error': str(e)}
+            overall_ok = False
 
-    @app.route('/api/sina/for_ai_with_indicators/<code>')
-    def get_sina_for_ai_with_indicators(code):
-        """获取格式化的股票数据（包含技术指标），用于AI分析"""
+        # ── 3. 调度器状态 ──
         try:
-            code_str = str(code).strip()
-            if not is_valid_stock_code(code_str):
-                return jsonify({'error': '股票代码格式错误', 'message': '股票代码应为6位数字(A股)或1-5位字母(美股)，如 000001 或 AAPL'}), 400
-            
-            print(f"[API] 获取AI分析数据（含技术指标），股票代码: {code_str}")
-            data = get_comprehensive_data_with_indicators(code_str)
-            formatted = format_for_ai(data)
-            
-            raw_data = {
-                'realtime': data['realtime'],
-                'timeline_count': len(data['timeline']) if data['timeline'] is not None else 0,
-                'minute_5_count': len(data['minute_5']) if data['minute_5'] is not None else 0,
-                'minute_15_count': len(data['minute_15']) if data['minute_15'] is not None else 0,
-                'minute_30_count': len(data['minute_30']) if data['minute_30'] is not None else 0,
-                'daily_count': len(data['daily']) if data['daily'] is not None else 0,
-                'sector_info': data.get('sector_info', []),
-                'money_flow': data.get('money_flow', {}),
-                'fundamental': data.get('fundamental', {}),
-                'industry_comparison': data.get('industry_comparison', {}),
+            from scheduler import get_scheduler
+            sched = get_scheduler()
+            running = sched.running if hasattr(sched, 'running') else False
+            health_status['checks']['scheduler'] = {
+                'ok': running,
+                'task_count': len(sched.tasks) if hasattr(sched, 'tasks') else 0,
             }
-            
-            # 添加技术指标摘要
-            if data['daily'] is not None and len(data['daily']) > 0:
-                latest = data['daily'].iloc[-1]
-                indicators_summary = {}
-                
-                ma_cols = [col for col in data['daily'].columns if col.startswith('MA') and not col.startswith('MACD')]
-                if ma_cols:
-                    indicators_summary['MA'] = {col: float(latest[col]) for col in ma_cols if pd.notna(latest[col])}
-                
-                if 'MACD_DIF' in data['daily'].columns and pd.notna(latest['MACD_DIF']):
-                    indicators_summary['MACD'] = {
-                        'DIF': float(latest['MACD_DIF']),
-                        'DEA': float(latest.get('MACD_DEA', 0)) if pd.notna(latest.get('MACD_DEA')) else 0,
-                        'MACD': float(latest.get('MACD', 0)) if pd.notna(latest.get('MACD')) else 0
-                    }
-                
-                if 'RSI14' in data['daily'].columns and pd.notna(latest['RSI14']):
-                    indicators_summary['RSI'] = float(latest['RSI14'])
-                
-                if 'KDJ_K' in data['daily'].columns and pd.notna(latest['KDJ_K']):
-                    indicators_summary['KDJ'] = {
-                        'K': float(latest['KDJ_K']),
-                        'D': float(latest.get('KDJ_D', 0)) if pd.notna(latest.get('KDJ_D')) else 0,
-                        'J': float(latest.get('KDJ_J', 0)) if pd.notna(latest.get('KDJ_J')) else 0
-                    }
-                
-                if 'BOLL_UPPER' in data['daily'].columns and pd.notna(latest['BOLL_UPPER']):
-                    indicators_summary['BOLL'] = {
-                        'upper': float(latest['BOLL_UPPER']),
-                        'mid': float(latest.get('BOLL_MID', 0)) if pd.notna(latest.get('BOLL_MID')) else 0,
-                        'lower': float(latest.get('BOLL_LOWER', 0)) if pd.notna(latest.get('BOLL_LOWER')) else 0
-                    }
-                
-                raw_data['indicators'] = indicators_summary
-            
-            response = jsonify({'code': code_str, 'formatted_text': formatted, 'raw_data': raw_data})
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
+            if not running:
+                overall_ok = False
         except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取AI分析数据失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
-    
-    # ==================== 舆情数据API ====================
-    
-    @app.route('/api/sentiment/news/<code>')
-    def get_sentiment_news(code):
-        """获取股票相关新闻"""
+            health_status['checks']['scheduler'] = {'ok': False, 'error': str(e)}
+            overall_ok = False
+
+        # ── 4. 磁盘空间 (data dir, 阈值 1GB) ──
         try:
-            code_str = str(code).strip()
-            days = int(request.args.get('days', 7))
-            
-            news_list = get_news_from_stock(code_str, days=days)
-            
-            response = jsonify({
-                'code': code_str,
-                'days': days,
-                'count': len(news_list),
-                'news': news_list
-            })
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
+            project_root = os.path.dirname(os.path.abspath(__file__))
+            usage = shutil.disk_usage(project_root)
+            free_gb = usage.free / (1024 ** 3)
+            health_status['checks']['disk'] = {
+                'ok': free_gb > 1.0,
+                'free_gb': round(free_gb, 2),
+                'total_gb': round(usage.total / (1024 ** 3), 2),
+            }
+            if free_gb < 1.0:
+                overall_ok = False
         except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取新闻失败: {error_msg}")
-            return jsonify({'error': '获取新闻失败', 'message': error_msg}), 500
-    
-    @app.route('/api/sentiment/posts/<code>')
-    def get_sentiment_posts(code):
-        """获取股吧帖子（最新+热门）"""
+            health_status['checks']['disk'] = {'ok': False, 'error': str(e)}
+
+        # ── 5. 内存 (best effort) ──
         try:
-            code_str = str(code).strip()
-            latest_count = int(request.args.get('latest', 10))
-            hot_count = int(request.args.get('hot', 10))
-            
-            posts_list = get_guba_posts(code_str, latest_count=latest_count, hot_count=hot_count)
-            
-            # 按类型分组
-            latest_posts = [p for p in posts_list if p.get('sort_type') == 'latest']
-            hot_posts = [p for p in posts_list if p.get('sort_type') == 'hot']
-            
-            response = jsonify({
-                'code': code_str,
-                'latest_count': len(latest_posts),
-                'hot_count': len(hot_posts),
-                'total_count': len(posts_list),
-                'latest_posts': latest_posts,
-                'hot_posts': hot_posts,
-                'all_posts': posts_list
-            })
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取股吧帖子失败: {error_msg}")
-            return jsonify({'error': '获取股吧帖子失败', 'message': error_msg}), 500
-    
-    @app.route('/api/sentiment/all/<code>')
-    def get_sentiment_all(code):
-        """获取完整舆情数据（新闻+帖子）"""
-        try:
-            code_str = str(code).strip()
-            days = int(request.args.get('days', 7))
-            latest_count = int(request.args.get('latest', 10))
-            hot_count = int(request.args.get('hot', 10))
-            
-            # 获取新闻
-            news_list = get_news_from_stock(code_str, days=days)
-            
-            # 获取帖子
-            posts_list = get_guba_posts(code_str, latest_count=latest_count, hot_count=hot_count)
-            
-            # 按类型分组
-            latest_posts = [p for p in posts_list if p.get('sort_type') == 'latest']
-            hot_posts = [p for p in posts_list if p.get('sort_type') == 'hot']
-            
-            response = jsonify({
-                'code': code_str,
-                'news': {
-                    'count': len(news_list),
-                    'days': days,
-                    'list': news_list
-                },
-                'posts': {
-                    'latest_count': len(latest_posts),
-                    'hot_count': len(hot_posts),
-                    'total_count': len(posts_list),
-                    'latest_posts': latest_posts,
-                    'hot_posts': hot_posts,
-                    'all_posts': posts_list
-                }
-            })
-            response.headers['Content-Type'] = 'application/json; charset=utf-8'
-            return response
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取舆情数据失败: {error_msg}")
-            return jsonify({'error': '获取舆情数据失败', 'message': error_msg}), 500
-    
+            import psutil
+            mem = psutil.virtual_memory()
+            health_status['checks']['memory'] = {
+                'percent': mem.percent,
+                'available_gb': round(mem.available / (1024 ** 3), 2),
+            }
+        except ImportError:
+            health_status['checks']['memory'] = {'ok': None, 'note': 'psutil not installed'}
+
+        if not overall_ok:
+            health_status['status'] = 'degraded'
+        return jsonify(health_status), 200 if overall_ok else 503
+
+    # 修复 ARCH-01: 抽离 sina + sentiment 路由到 realtime_routes.py
+    from realtime_routes import register_realtime_routes
+    register_realtime_routes(app)
+
+
     # ==================== 自选股API ====================
-    
+
     @app.route('/api/watchlist', methods=['GET'])
     def get_watchlist_api():
         """获取自选股列表（支持分页）"""
@@ -2161,6 +1693,7 @@ def register_routes(app):
                 order_type=data.get("order_type", "manual"),
                 strategy_run_id=data.get("strategy_run_id"),
                 note=data.get("note"),
+                client_order_id=data.get("client_order_id"),  # 幂等键
             )
             return jsonify(result), 201
         except ValueError as e:
@@ -2319,6 +1852,9 @@ def register_routes(app):
                         order_type="signal",
                         strategy_run_id=strategy_run_id,
                         note=signal.get("note", f"策略信号 #{i+1}"),
+                        # 策略信号批量下单用 (strategy_run_id, code, direction) 作为幂等键
+                        client_order_id=signal.get("client_order_id")
+                            or f"{strategy_run_id or 'sig'}:{signal['code']}:{signal['direction']}:{i}",
                     )
                     results.append(result)
                 except ValueError as e:
@@ -2802,6 +2338,7 @@ def register_routes(app):
     # ═══════════════════════════════════════════════════════════
 
     @app.route('/api/forecast', methods=['POST'])
+    @rate_limit('ai_analyze')
     def forecast_api():
         """预测未来买卖信号"""
         import traceback
@@ -2881,7 +2418,8 @@ def register_routes(app):
                 try:
                     rt = get_realtime_data(code)
                     if rt and rt.get('current_price'): cp = rt['current_price']
-                except: pass
+                except Exception as _rt_err:
+                    logger.debug(f"realtime price fetch failed for {code}: {_rt_err}")
             if cp <= 0: return jsonify({"error": "无法获取当前价格"}), 400
             cash = account.cash_balance
             qty = data.get('quantity', 0)
@@ -2914,40 +2452,25 @@ def register_routes(app):
     # ─── 基本面与因子分析 ───
 
     @app.route('/api/fundamentals/<code>')
+    @json_endpoint('raw')
     def get_fundamentals(code):
         """获取最新财务数据（MySQL优先，毫秒级）"""
-        try:
-            code_str = str(code).strip()
-            data = get_fundamental_data(code_str)
-            return jsonify(data if data else {})
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取财务数据失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
+        code_str = str(code).strip()
+        return get_fundamental_data(code_str) or {}
 
     @app.route('/api/factor/rating/<code>')
+    @json_endpoint('raw')
     def get_factor_rating(code):
         """获取多因子综合评级"""
-        try:
-            code_str = str(code).strip()
-            rating = get_stock_rating(code_str)
-            return jsonify(rating)
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取因子评级失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
+        code_str = str(code).strip()
+        return get_stock_rating(code_str)
 
     @app.route('/api/factor/rating_text/<code>')
+    @json_endpoint('raw')
     def get_factor_rating_text(code):
         """获取多因子评级文本（用于AI注入）"""
-        try:
-            code_str = str(code).strip()
-            text = get_rating_text(code_str)
-            return jsonify({'code': code_str, 'text': text})
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 获取因子评级文本失败: {error_msg}")
-            return jsonify({'error': '获取数据失败', 'message': error_msg}), 500
+        code_str = str(code).strip()
+        return {'code': code_str, 'text': get_rating_text(code_str)}
 
     # ─── 信号融合 ───
 
@@ -2962,11 +2485,23 @@ def register_routes(app):
             results = {}
             if 'code' in data:
                 code = str(data['code']).strip()
-                results[code] = fuse_signals(code, db=next(get_db()))
+                db = next(get_db())
+                try:
+                    results[code] = fuse_signals(code, db=db)
+                finally:
+                    db.close()
             elif 'codes' in data:
+                # 修复 BUG-04: 每次循环单独 try/finally close,避免连接池耗尽
                 for code in data['codes']:
                     code_str = str(code).strip()
-                    results[code_str] = fuse_signals(code_str, db=next(get_db()))
+                    db = next(get_db())
+                    try:
+                        results[code_str] = fuse_signals(code_str, db=db)
+                    except Exception as inner_e:
+                        results[code_str] = {'error': str(inner_e)}
+                        print(f"[API] signal_fuse {code_str} 失败: {inner_e}")
+                    finally:
+                        db.close()
             else:
                 return jsonify({'error': '缺少 code 或 codes 字段'}), 400
 
@@ -3018,140 +2553,18 @@ def register_routes(app):
             error_msg = str(e)
             print(f"[API] 批量回测失败: {error_msg}")
             return jsonify({'error': '处理失败', 'message': error_msg}), 500
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[API] 批量回测失败: {error_msg}")
-            return jsonify({'error': '处理失败', 'message': error_msg}), 500
 
     # 策略系统路由
     register_strategy_routes(app)
 
     # ═══════════════════════════════════════════════════════════
-    # 内置调度器路由
+    # 内置调度器路由 — 修复 ARCH-01: 抽离到 scheduler_routes.py
     # ═══════════════════════════════════════════════════════════
+    from scheduler_routes import register_scheduler_routes
+    register_scheduler_routes(app)
 
-    @app.route("/api/scheduler/status", methods=["GET"])
-    def scheduler_status():
-        """查看调度器任务状态"""
-        try:
-            from scheduler import get_scheduler_status
-            return jsonify({"success": True, "tasks": get_scheduler_status()})
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/api/scheduler/logs", methods=["GET"])
-    def scheduler_logs():
-        """查看最近调度器输出"""
-        try:
-            limit = int(request.args.get("limit", 20))
-            from scheduler import get_scheduler_outputs
-            return jsonify({"success": True, "records": get_scheduler_outputs(limit)})
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/api/scheduler/trigger", methods=["POST"])
-    def scheduler_trigger():
-        """手动触发调度器任务"""
-        try:
-            from scheduler import get_scheduler
-            data = request.get_json(silent=True) or {}
-            name = data.get("name", "")
-            sched = get_scheduler()
-            result = sched.run_task(name)
-            return jsonify(result)
-        except Exception as e:
-            return jsonify({"success": False, "error": str(e)}), 500
-
-    # ═══════════ 主线预判 API ═══════════
-    @app.route("/api/sector-prediction", methods=["GET"])
-    def get_sector_prediction():
-        """获取主线预判数据"""
-        try:
-            import os, json, glob
-            eval_dir = os.path.join(os.path.dirname(__file__), "eval_result")
-            pattern = os.path.join(eval_dir, "主线预判_*.md")
-            all_files = sorted(glob.glob(pattern), reverse=True)
-
-            date_param = request.args.get("date", "")
-            show_all = request.args.get("all", "false").lower() == "true"
-
-            if date_param:
-                target = os.path.join(eval_dir, f"主线预判_{date_param}.md")
-                if os.path.exists(target):
-                    with open(target, encoding="utf-8") as f:
-                        return jsonify({"success": True, "data": {"date": date_param, "report": f.read()}})
-                return jsonify({"success": False, "error": f"无{date_param}的预判数据"}), 404
-
-            results = []
-            for fpath in all_files[:30]:
-                fname = os.path.basename(fpath)
-                date_str = fname.replace("主线预判_", "").replace(".md", "")
-                with open(fpath, encoding="utf-8") as f:
-                    report = f.read()
-                if show_all:
-                    results.append({"date": date_str, "report": report})
-                else:
-                    # 只返回最新
-                    return jsonify({"success": True, "data": {"date": date_str, "report": report}})
-
-            return jsonify({"success": True, "data": results})
-
-        except Exception as e:
-            return jsonify({"success": False, "error": str(e)}), 500
-
-    @app.route("/api/sector-prediction/run", methods=["POST"])
-    def run_sector_prediction():
-        """手动触发主线预判"""
-        try:
-            import subprocess, os
-            workdir = os.path.dirname(__file__)
-            result = subprocess.run(
-                ["uv", "run", "python", "sector_prediction.py"],
-                cwd=workdir, capture_output=True, text=True, timeout=60
-            )
-            return jsonify({
-                "success": result.returncode == 0,
-                "output": result.stdout[-2000:],
-                "error": result.stderr[-500:] if result.stderr else None
-            })
-        except Exception as e:
-            return jsonify({"success": False, "error": str(e)}), 500
-
-    # ═══════════ 突破扫描 API ═══════════
-    @app.route("/api/breakout-scan", methods=["GET"])
-    def get_breakout_scan():
-        """获取突破扫描结果"""
-        try:
-            import subprocess, os
-            workdir = os.path.dirname(__file__)
-            result = subprocess.run(
-                ["uv", "run", "python", "breakout_scanner.py", "--top", "15"],
-                cwd=workdir, capture_output=True, text=True, timeout=120
-            )
-            return jsonify({
-                "success": result.returncode == 0,
-                "report": result.stdout,
-                "error": result.stderr[-500:] if result.stderr else None
-            })
-        except Exception as e:
-            return jsonify({"success": False, "error": str(e)}), 500
-
-    @app.route("/api/breakout-scan/run", methods=["POST"])
-    def run_breakout_scan():
-        """手动触发突破扫描"""
-        try:
-            import subprocess, os
-            workdir = os.path.dirname(__file__)
-            result = subprocess.run(
-                ["uv", "run", "python", "breakout_scanner.py"],
-                cwd=workdir, capture_output=True, text=True, timeout=120
-            )
-            return jsonify({
-                "success": result.returncode == 0,
-                "output": result.stdout[-3000:],
-                "error": result.stderr[-500:] if result.stderr else None
-            })
-        except Exception as e:
-            return jsonify({"success": False, "error": str(e)}), 500
+    # 修复 ARCH-01: 抽离 sector + profile 路由到 sector_routes.py
+    from sector_routes import register_sector_routes
+    register_sector_routes(app)
 
     return app

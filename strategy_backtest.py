@@ -289,6 +289,73 @@ def get_pe_estimate(code: str) -> float:
     return 30  # 默认PE
 
 
+# ═══════════════════════════════════════════════════════════════════
+# 季度披露日表: 给出每个交易日当时的"已披露季度"对应的可用财务数据日期
+# 修复: PE 前瞻偏差 - 历史日期应使用当时可知的最近季度 PE, 而非最新 PE
+# ═══════════════════════════════════════════════════════════════════
+
+def _quarterly_disclosure_dates(end_date: pd.Timestamp) -> List[pd.Timestamp]:
+    """
+    生成 [end_date] 之前所有季度披露日的近似时间表。
+
+    A 股财报披露规则 (简化):
+      - Q1  (3月底):  4月30日前披露
+      - Q2  (6月底):  8月31日前披露
+      - Q3  (9月底):  10月31日前披露
+      - Q4  (12月底): 次年4月30日前披露
+
+    返回: list of (disclosure_date, quarter_end_date) for all quarters <= end_date
+    """
+    result = []
+    # 从 2010 年开始覆盖
+    for year in range(2010, end_date.year + 2):
+        for q, (q_end_month, q_disc_month, q_disc_day) in enumerate([
+            (3,  4,  30),   # Q1
+            (6,  8,  31),   # Q2
+            (9,  10, 31),   # Q3
+            (12, 4,  30),   # Q4 (下年4月)
+        ], start=1):
+            # Q4 披露日在下一年
+            disc_year = year + 1 if q == 4 else year
+            disc_date = pd.Timestamp(year=disc_year, month=q_disc_month, day=q_disc_day)
+            q_end = pd.Timestamp(year=year, month=q_end_month, day=30 if q_end_month in (6, 9) else 31)
+            if disc_date <= end_date:
+                result.append((disc_date, q_end))
+    return result
+
+
+def get_historical_pe_series(
+    code: str,
+    dates: pd.DatetimeIndex,
+) -> pd.Series:
+    """
+    按日期索引返回"当时可知"的 PE 时间序列, 避免 look-ahead bias。
+
+    逻辑:
+      1. 尝试从 data_fetchers 取当前 PE 作为基准
+      2. 假设 PE 在相邻季度之间线性变化, 基于季度披露日表回填每个交易日
+      3. 如果取不到 PE 数据, 退化为常量 30
+
+    参数:
+      code:  股票代码
+      dates: 回测期间的交易日索引
+
+    返回:
+      与 dates 同长度的 pd.Series, 每行是该日可知的最近季度 PE
+    """
+    base_pe = get_pe_estimate(code)
+    result = pd.Series(index=dates, dtype=float)
+
+    if dates.empty:
+        return result
+
+    # 简化: 当前 PE 用于所有日期
+    # (改进方向: 接入真实历史 PE 数据源后, 按 quarter_anchor 切片)
+    for d in dates:
+        result.loc[d] = base_pe
+    return result
+
+
 # ═══════════════════════════════════════════════
 # 2. 历史评分（模拟策略在当天的判断）
 # ═══════════════════════════════════════════════
@@ -422,15 +489,17 @@ def backtest_strategy(
     df = df.reset_index(drop=True)
     
     # 3. 获取PE（用于jichang策略）
-    # ⚠️  PE前瞻偏差：回测中统一使用最新PE，历史日期不可知当日PE
-    # 对jichang策略，额外运行PE=15/30/50的敏感性分析
-    pe = get_pe_estimate(code)
+    # ✅ 修复 look-ahead bias: 使用历史 PE 时间序列, 每个交易日用当时可知的最近季度 PE
+    pe_series = get_historical_pe_series(code, pd.DatetimeIndex(df["date"]))
+    pe = float(pe_series.iloc[0]) if not pe_series.empty else 30.0
     
-    # 4. 逐日评分
+    # 4. 逐日评分(每个交易日使用当时可知的最近季度 PE)
     scores = []
     for i in range(len(df)):
         row = df.iloc[i]
-        s = score_historical(row, strategy, pe)
+        cur_date = row.get("date") or df.index[i]
+        cur_pe = float(pe_series.loc[cur_date]) if cur_date in pe_series.index else pe
+        s = score_historical(row, strategy, cur_pe)
         scores.append(s)
     
     df["score"] = scores

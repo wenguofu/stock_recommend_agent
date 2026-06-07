@@ -542,6 +542,131 @@ class StockAPI {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
     });
   }
+
+  // 股票画像与机构预测
+  async getStockProfile(code: string): Promise<any> {
+    return this.request(`/api/stock/profile/${code}`);
+  }
+
+  async getAnalystPredictions(code: string): Promise<any> {
+    return this.request(`/api/analyst/predictions/${code}`);
+  }
+
+  // ── Sprint4: ML 监控 + 影子模式 + 模型注册表 + 校准 + 可解释性 ──
+  async getMLMonitorDaily(modelId = "short_term", days = 30): Promise<any> {
+    return this.request(`/api/ml/monitor/daily?model_id=${modelId}&days=${days}`);
+  }
+
+  async getMLMonitorTrend(modelId = "short_term", days = 30): Promise<any> {
+    return this.request(`/api/ml/monitor/trend?model_id=${modelId}&days=${days}`);
+  }
+
+  async getShadowCompare(modelId = "short_term", days = 30): Promise<any> {
+    return this.request(`/api/ml/shadow/compare?model_id=${modelId}&days=${days}`);
+  }
+
+  async listModelVersions(modelId?: string): Promise<any> {
+    const q = modelId ? `?model_id=${modelId}` : "";
+    return this.request(`/api/ml/registry/list${q}`);
+  }
+
+  async promoteModelVersion(versionId: number): Promise<any> {
+    return this.request(`/api/ml/registry/promote`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ version_id: versionId }),
+    });
+  }
+
+  async setShadowVersion(versionId: number): Promise<any> {
+    return this.request(`/api/ml/registry/set_shadow`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ version_id: versionId }),
+    });
+  }
+
+  async getCalibration(modelId = "short_term"): Promise<any> {
+    return this.request(`/api/ml/calibration/get?model_id=${modelId}`);
+  }
+
+  async explainPrediction(code: string, modelId = "short_term"): Promise<any> {
+    return this.request(`/api/ml/explain/${code}?model=${modelId}`);
+  }
+
+  // ── Sprint5: 组合优化 + 敏感度扫描 + 特征工程 + 告警 + 缓存 ──
+  async portfolioCorrelation(codes: string[], days = 120): Promise<any> {
+    return this.request(`/api/portfolio/correlation?codes=${codes.join(",")}&days=${days}`);
+  }
+
+  async portfolioMarkowitz(codes: string[], days = 120, targetReturn?: number): Promise<any> {
+    let url = `/api/portfolio/markowitz?codes=${codes.join(",")}&days=${days}`;
+    if (targetReturn != null) url += `&target_return=${targetReturn}`;
+    return this.request(url);
+  }
+
+  async portfolioFrontier(codes: string[], days = 120, points = 20): Promise<any> {
+    return this.request(`/api/portfolio/efficient_frontier?codes=${codes.join(",")}&days=${days}&points=${points}`);
+  }
+
+  async portfolioRiskParity(codes: string[], days = 120): Promise<any> {
+    return this.request(`/api/portfolio/risk_parity?codes=${codes.join(",")}&days=${days}`);
+  }
+
+  async portfolioRecommend(opts: {
+    holdings?: Array<{code: string; shares: number; cost: number}>;
+    candidates: string[];
+    total_capital: number;
+    days?: number;
+    max_stocks?: number;
+    risk_profile?: "conservative" | "moderate" | "aggressive";
+  }): Promise<any> {
+    return this.request(`/api/portfolio/recommend`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    });
+  }
+
+  async scanSensitivity(opts: {
+    code: string;
+    strategy: string;
+    param_grid: Record<string, number[]>;
+    days?: number;
+    objective?: string;
+  }): Promise<any> {
+    return this.request(`/api/sensitivity/scan`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    });
+  }
+
+  async getSensitivityDefaultGrid(): Promise<any> {
+    return this.request(`/api/sensitivity/default_grid`);
+  }
+
+  async buildFeatures(code: string, days = 250, horizon = 5): Promise<any> {
+    return this.request(`/api/features/build`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, days, horizon }),
+    });
+  }
+
+  async sendAlert(level: "info" | "warn" | "error", title: string, content: string, tags?: string[]): Promise<any> {
+    return this.request(`/api/alert/send`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ level, title, content, tags }),
+    });
+  }
+
+  async getAlertChannels(): Promise<any> {
+    return this.request(`/api/alert/channels`);
+  }
+
+  async getCacheStats(): Promise<any> {
+    return this.request(`/api/cache/stats`);
+  }
+
+  async clearCache(): Promise<any> {
+    return this.request(`/api/cache/clear`, { method: "POST" });
+  }
 }
 
 export const stockAPI = new StockAPI();

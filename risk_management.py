@@ -972,3 +972,744 @@ def quick_risk_summary(code: str, position: Optional[Dict] = None) -> str:
             lines.append(f"- 建议止损: {pa['suggested_stop_loss']} (亏{pa.get('stop_loss_amount', 'N/A')}元)")
 
     return '\n'.join(lines)
+
+
+def _safe_bool(val):
+    """Convert numpy.bool_ to Python bool for JSON serialization"""
+    return bool(val) if val is not None else False
+
+
+def _safe_float(val):
+    """Convert numpy.float to Python float"""
+    return float(val) if val is not None else None
+
+# ═══════════════════════════════════════════════════════════════
+#
+# 核心理念：
+#   1. 找到正期望值的交易 (Edge > 0)
+#   2. 用凯利公式确定最优仓位 (Kelly Criterion)
+#   3. 控制破产风险 (Risk of Ruin)
+#   4. 动态调整：不确定性 → 降仓，回撤 → 降仓
+#   5. 多层止损：硬止损 + 移动止损 + 时间止损
+# ═══════════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════
+# 1. 风险破产概率 (Risk of Ruin)
+# ═══════════════════════════════════════════════════════════════
+
+def calc_risk_of_ruin(
+    win_rate: float,
+    avg_win_pct: float,
+    avg_loss_pct: float,
+    capital_units: float = 20.0,
+    position_pct: float = None,
+) -> Dict:
+    """
+    计算破产风险 — 「击败庄家」核心概念
+
+    即使有正期望值，连续亏损也会导致破产。
+    RoR = ((1 - edge) / (1 + edge)) ^ capital_units
+
+    Args:
+        win_rate: 胜率 (0-1)
+        avg_win_pct: 平均盈利%
+        avg_loss_pct: 平均亏损%
+        capital_units: 资金单位数 = 总资金 / 单笔风险金额
+        position_pct: 仓位百分比。如果提供，自动计算 capital_units
+
+    Returns:
+        dict: {risk_of_ruin_pct, capital_units, max_consecutive_losses,
+               survival_horizon_trades, interpretation}
+    """
+    loss_rate = 1 - win_rate
+
+    if avg_loss_pct <= 0:
+        return {'risk_of_ruin_pct': None, 'error': 'avg_loss_pct 必须 > 0'}
+
+    # 计算 edge (期望收益率)
+    edge = (win_rate * avg_win_pct - loss_rate * avg_loss_pct) / 100
+
+    # 如果提供仓位百分比，计算 capital_units
+    if position_pct is not None and position_pct > 0:
+        # capital_units = 单笔亏损能承受多少次
+        # 每笔亏损 = position_pct% * avg_loss_pct%
+        loss_per_trade_pct = (position_pct / 100) * avg_loss_pct
+        if loss_per_trade_pct > 0:
+            capital_units = 100 / loss_per_trade_pct
+        else:
+            capital_units = float('inf')
+
+    if capital_units <= 0:
+        return {'risk_of_ruin_pct': None, 'error': 'capital_units 必须 > 0'}
+
+    # 经典破产公式 (Thorp)
+    if edge <= 0:
+        # 负期望值 → 必然破产
+        risk_of_ruin = 1.0
+        interpretation = '🔴 负期望值，长期必然亏损。不要交易。'
+    elif edge >= 1.0:
+        risk_of_ruin = 0.0
+        interpretation = '🟢 极端正期望值，几乎不可能破产。'
+    else:
+        # RoR = ((1-edge)/(1+edge)) ^ capital_units
+        ror_ratio = (1 - edge) / (1 + edge)
+        if ror_ratio <= 0:
+            risk_of_ruin = 0.0
+        else:
+            risk_of_ruin = ror_ratio ** capital_units
+
+        if risk_of_ruin < 0.01:
+            interpretation = '🟢 破产风险极低 (<1%)，仓位合理。'
+        elif risk_of_ruin < 0.05:
+            interpretation = '🟡 破产风险可控 (1-5%)，可继续当前仓位。'
+        elif risk_of_ruin < 0.15:
+            interpretation = '🟠 破产风险偏高 (5-15%)，建议降低仓位。'
+        elif risk_of_ruin < 0.50:
+            interpretation = '🔴 破产风险很高 (15-50%)，必须大幅降低仓位！'
+        else:
+            interpretation = '💀 破产风险极高 (>50%)，当前仓位必然导致爆仓！'
+
+    # 最大连续亏损次数估计
+    if loss_rate > 0 and loss_rate < 1:
+        # 95%置信度下的最大连续亏损
+        max_consecutive = math.ceil(math.log(0.05) / math.log(loss_rate)) if loss_rate > 0 else 0
+    else:
+        max_consecutive = 0
+
+    # 生存期限 (在95%置信度下能交易多少次)
+    if risk_of_ruin > 0 and risk_of_ruin < 1:
+        # 简化的生存交易次数估计
+        if edge > 0:
+            half_life = math.log(0.5) / math.log(ror_ratio) if ror_ratio > 0 else float('inf')
+            survival_trades = int(half_life * 3)  # 3个半衰期
+        else:
+            survival_trades = 0
+    else:
+        survival_trades = None
+
+    return {
+        'risk_of_ruin_pct': round(risk_of_ruin * 100, 2),
+        'risk_of_ruin_decimal': round(risk_of_ruin, 6),
+        'capital_units': round(capital_units, 1),
+        'edge_pct': round(edge * 100, 2),
+        'max_consecutive_losses_95pct': max_consecutive,
+        'survival_horizon_trades': survival_trades,
+        'interpretation': interpretation,
+        'recommendation': _ror_recommendation(risk_of_ruin, edge, position_pct),
+    }
+
+
+def _ror_recommendation(ror: float, edge: float, position_pct: float = None) -> str:
+    """基于破产风险给出仓位建议"""
+    if edge <= 0:
+        return '不交易：期望值为负。'
+    if ror < 0.01:
+        return '当前仓位安全，可维持。'
+    if ror < 0.05:
+        return '当前仓位可接受，但不要再增加。'
+    if ror < 0.15:
+        if position_pct:
+            suggested = position_pct * 0.6
+            return f'建议降至 {suggested:.1f}% 仓位以降低破产风险。'
+        return '建议降低仓位至当前60%。'
+    if ror < 0.50:
+        if position_pct:
+            suggested = position_pct * 0.4
+            return f'必须降至 {suggested:.1f}% 仓位以下！'
+        return '必须大幅降低仓位！'
+    return '立即减仓至最低水平，当前仓位不可持续！'
+
+
+# ═══════════════════════════════════════════════════════════════
+# 2. 期望值/优势计算 (Expected Value & Edge)
+# ═══════════════════════════════════════════════════════════════
+
+def calc_trade_edge(
+    win_rate: float,
+    avg_win_pct: float,
+    avg_loss_pct: float,
+    entry_price: float = None,
+    target_price: float = None,
+    stop_price: float = None,
+) -> Dict:
+    """
+    计算单笔交易的期望值和优势
+
+    EV = p * win - (1-p) * loss
+    Edge = EV / avg_loss  (标准化优势)
+
+    支持两种模式:
+    1. 统计模式: 给定历史 win_rate/avg_win/avg_loss
+    2. 价位模式: 给定 entry/target/stop 自动计算盈亏比
+
+    Args:
+        win_rate: 胜率
+        avg_win_pct: 平均盈利%
+        avg_loss_pct: 平均亏损%
+        entry_price: 入场价 (价位模式)
+        target_price: 目标价 (价位模式)
+        stop_price: 止损价 (价位模式)
+
+    Returns:
+        dict: {edge_pct, ev_pct, profit_factor, is_positive_edge, kelly_pct, ...}
+    """
+    # 价位模式
+    if entry_price and target_price and stop_price:
+        if entry_price <= 0 or target_price <= 0 or stop_price <= 0:
+            return {'error': '价格必须 > 0'}
+        # 做多
+        avg_win_pct = abs(target_price - entry_price) / entry_price * 100
+        avg_loss_pct = abs(entry_price - stop_price) / entry_price * 100
+        profit_loss_ratio = avg_win_pct / avg_loss_pct if avg_loss_pct > 0 else 0
+    else:
+        profit_loss_ratio = avg_win_pct / avg_loss_pct if avg_loss_pct > 0 else 0
+
+    loss_rate = 1 - win_rate
+
+    # 期望收益率 (每笔交易的期望收益%)
+    ev_pct = (win_rate * avg_win_pct - loss_rate * avg_loss_pct)
+
+    # 标准化优势 (edge)
+    if avg_loss_pct > 0:
+        edge = ev_pct / avg_loss_pct
+    else:
+        edge = ev_pct  # fallback
+
+    # 利润因子
+    total_win = win_rate * avg_win_pct
+    total_loss = loss_rate * avg_loss_pct
+    profit_factor = total_win / total_loss if total_loss > 0 else float('inf')
+
+    # 凯利仓位
+    if avg_loss_pct > 0:
+        b = profit_loss_ratio
+        kelly = (win_rate * b - loss_rate) / b
+        kelly = max(0, min(kelly, 1.0))
+    else:
+        kelly = 0
+
+    # 判断
+    if ev_pct > 1.0:
+        assessment = '🟢 强正期望值，积极交易'
+    elif ev_pct > 0.3:
+        assessment = '🟢 正期望值，可以交易'
+    elif ev_pct > 0:
+        assessment = '🟡 微弱正期望值，谨慎交易'
+    elif ev_pct > -0.3:
+        assessment = '🟠 略微负期望值，不建议交易'
+    else:
+        assessment = '🔴 显著负期望值，禁止交易'
+
+    return {
+        'edge_pct': round(edge * 100, 2),
+        'ev_per_trade_pct': round(ev_pct, 2),
+        'profit_factor': round(profit_factor, 2),
+        'is_positive_edge': _safe_bool(ev_pct > 0),
+        'assessment': assessment,
+        'kelly_pct': round(kelly * 100, 1),
+        'win_rate_pct': round(win_rate * 100, 1),
+        'avg_win_pct': round(avg_win_pct, 2),
+        'avg_loss_pct': round(avg_loss_pct, 2),
+        'profit_loss_ratio': round(profit_loss_ratio, 2),
+        'entry_price': entry_price,
+        'target_price': target_price,
+        'stop_price': stop_price,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# 3. 动态凯利 — 不确定性 + 回撤双调整
+# ═══════════════════════════════════════════════════════════════
+
+def calc_dynamic_kelly(
+    win_rate: float,
+    avg_win_pct: float,
+    avg_loss_pct: float,
+    sample_size: int = 30,
+    current_drawdown_pct: float = 0,
+    confidence: float = 0.95,
+) -> Dict:
+    """
+    动态凯利仓位 — 「击败庄家」实战精髓
+
+    Thorp 本人只用半凯利甚至1/4凯利，因为：
+    1. 胜率估计有误差 (样本不足)
+    2. 市场条件变化
+    3. 连续亏损后心理压力
+
+    调整因子:
+    - 样本不足 → 降仓 (小样本胜率不可靠)
+    - 当前回撤 → 降仓 (回撤中降低风险暴露)
+
+    Args:
+        win_rate: 历史胜率
+        avg_win_pct: 平均盈利%
+        avg_loss_pct: 平均亏损%
+        sample_size: 样本交易次数
+        current_drawdown_pct: 当前回撤%
+        confidence: 置信水平
+
+    Returns:
+        dict: {base_kelly, adjusted_kelly, adjustments, ...}
+    """
+    loss_rate = 1 - win_rate
+
+    if avg_loss_pct <= 0:
+        return {'adjusted_kelly_pct': 0, 'error': 'avg_loss_pct 必须 > 0'}
+
+    # 基础凯利
+    b = avg_win_pct / avg_loss_pct
+    base_kelly = (win_rate * b - loss_rate) / b
+    base_kelly = max(0, min(base_kelly, 1.0))
+
+    adjustments = []
+    multiplier = 1.0
+
+    # 调整1: 样本不足折扣
+    if sample_size < 100:
+        # 胜率的标准误差 ≈ sqrt(p*(1-p)/n)
+        se = math.sqrt(win_rate * (1 - win_rate) / max(sample_size, 1))
+        # 95%置信下界
+        z_score = 1.645  # 单尾95%
+        win_rate_lower = win_rate - z_score * se
+        win_rate_lower = max(0.01, win_rate_lower)  # 不低于1%
+
+        # 用下界胜率重算凯利
+        b_lower = avg_win_pct / avg_loss_pct
+        kelly_lower = (win_rate_lower * b_lower - (1 - win_rate_lower)) / b_lower
+        kelly_lower = max(0, min(kelly_lower, 1.0))
+
+        confidence_discount = kelly_lower / base_kelly if base_kelly > 0 else 0
+        # 样本折扣不低于0.3 (即最多折70%，避免小样本时完全归零)
+        confidence_discount = max(confidence_discount, 0.3)
+        multiplier *= confidence_discount
+        adjustments.append({
+            'type': 'sample_size',
+            'sample_size': sample_size,
+            'win_rate_lower_bound': round(win_rate_lower * 100, 1),
+            'confidence_discount': round(confidence_discount, 3),
+            'reason': f'仅{sample_size}笔交易，胜率估计不确定',
+        })
+
+    # 调整2: 当前回撤折扣
+    if current_drawdown_pct > 5:
+        # 回撤越大，折扣越大
+        dd_discount = max(0.3, 1.0 - (current_drawdown_pct - 5) / 50)
+        multiplier *= dd_discount
+        adjustments.append({
+            'type': 'drawdown',
+            'current_drawdown_pct': round(current_drawdown_pct, 1),
+            'drawdown_discount': round(dd_discount, 3),
+            'reason': f'当前回撤{current_drawdown_pct:.1f}%，降低风险暴露',
+        })
+
+    # 调整3: 默认保守系数 (Thorp 本人用半凯利)
+    conservatism = 0.5  # 半凯利
+    multiplier *= conservatism
+    adjustments.append({
+        'type': 'conservatism',
+        'factor': conservatism,
+        'reason': 'Thorp半凯利原则：永远不押满凯利',
+    })
+
+    adjusted_kelly = base_kelly * multiplier
+
+    # 风险等级
+    if adjusted_kelly >= 0.20:
+        risk_level = '激进'
+    elif adjusted_kelly >= 0.10:
+        risk_level = '适中'
+    elif adjusted_kelly >= 0.03:
+        risk_level = '保守'
+    else:
+        risk_level = '极保守'
+
+    return {
+        'base_kelly_pct': round(base_kelly * 100, 1),
+        'adjusted_kelly_pct': round(adjusted_kelly * 100, 1),
+        'total_multiplier': round(multiplier, 3),
+        'risk_level': risk_level,
+        'adjustments': adjustments,
+        'win_rate': round(win_rate * 100, 1),
+        'avg_win_pct': round(avg_win_pct, 2),
+        'avg_loss_pct': round(avg_loss_pct, 2),
+        'sample_size': sample_size,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# 4. 多层止损体系
+# ═══════════════════════════════════════════════════════════════
+
+def calc_multi_tier_stop(
+    code: str,
+    entry_price: float,
+    max_loss_pct: float = 8.0,
+    atr_multiplier: float = 2.0,
+    trailing_pct: float = 5.0,
+    time_limit_days: int = 20,
+) -> Dict:
+    """
+    多层止损体系 — 从「击败庄家」延伸的实战风控
+
+    三层止损：
+    1. 硬止损 (Hard Stop): 基于最大可接受亏损
+    2. 移动止损 (Trailing Stop): 盈利后保护利润
+    3. 时间止损 (Time Stop): 超时未达预期则退出
+
+    Args:
+        code: 股票代码
+        entry_price: 入场价格
+        max_loss_pct: 最大可接受亏损% (硬止损)
+        atr_multiplier: ATR倍数 (波动止损)
+        trailing_pct: 移动止损回撤%
+        time_limit_days: 时间止损天数
+
+    Returns:
+        dict: {hard_stop, trailing_stop, atr_stop, time_stop, summary}
+    """
+    stops = {
+        'entry_price': entry_price,
+        'generated_at': datetime.now().isoformat(),
+    }
+
+    try:
+        kline = get_daily_kline(code, count=120)
+        if kline is None or len(kline) < 15:
+            stops['error'] = 'K线数据不足'
+            return stops
+
+        closes = kline['close'].values.astype(float)
+        current_price = closes[-1]
+
+        # 1. 硬止损
+        hard_stop = entry_price * (1 - max_loss_pct / 100)
+        hard_loss_pct = (entry_price - hard_stop) / entry_price * 100
+
+        stops['hard_stop'] = {
+            'price': round(hard_stop, 2),
+            'loss_pct': round(hard_loss_pct, 2),
+            'loss_per_share': round(entry_price - hard_stop, 2),
+            'type': 'hard',
+        }
+
+        # 2. ATR波动止损
+        atr_result = calc_atr_stop_loss(kline, multiplier=atr_multiplier)
+        if atr_result.get('stop_loss_price'):
+            atr_value = atr_result['atr_value']
+            atr_stop = entry_price - atr_multiplier * atr_value
+            # 不能高于硬止损
+            atr_stop = max(atr_stop, hard_stop)
+
+            stops['atr_stop'] = {
+                'price': round(atr_stop, 2),
+                'atr_value': round(atr_value, 2),
+                'atr_multiplier': atr_multiplier,
+                'loss_pct': round((entry_price - atr_stop) / entry_price * 100, 2),
+                'type': 'volatility',
+            }
+
+        # 3. 移动止损 (基于近期高点)
+        recent_high = max(closes[-20:]) if len(closes) >= 20 else closes[-1]
+        trailing_stop = recent_high * (1 - trailing_pct / 100)
+        # 不能低于硬止损
+        trailing_stop = max(trailing_stop, hard_stop)
+
+        stops['trailing_stop'] = {
+            'price': round(trailing_stop, 2),
+            'recent_high': round(recent_high, 2),
+            'trailing_pct': trailing_pct,
+            'loss_pct': round((entry_price - trailing_stop) / entry_price * 100, 2),
+            'type': 'trailing',
+            'note': f'从近期高点{recent_high:.2f}回撤{trailing_pct}%',
+        }
+
+        # 4. 时间止损
+        stops['time_stop'] = {
+            'entry_date': datetime.now().strftime('%Y-%m-%d'),
+            'deadline_date': (datetime.now() + timedelta(days=time_limit_days)).strftime('%Y-%m-%d'),
+            'max_hold_days': time_limit_days,
+            'condition': f'超过{time_limit_days}个交易日未触发止盈或未盈利，强制退出',
+            'type': 'time',
+        }
+
+        # 5. 综合建议
+        all_stops = [hard_stop]
+        if atr_result.get('stop_loss_price'):
+            all_stops.append(atr_stop)
+        effective_stop = max(all_stops)  # 最高 = 最紧
+
+        stops['summary'] = {
+            'effective_stop_price': round(effective_stop, 2),
+            'effective_stop_pct': round((entry_price - effective_stop) / entry_price * 100, 2),
+            'current_price': round(float(current_price), 2),
+            'current_pnl_pct': round((current_price / entry_price - 1) * 100, 2),
+            'stop_triggered': bool(current_price <= effective_stop),
+            'strategy': '取硬止损/ATR止损中较紧者作为有效止损',
+        }
+
+        return stops
+
+    except Exception as e:
+        stops['error'] = str(e)
+        return stops
+
+
+# ═══════════════════════════════════════════════════════════════
+# 5. 回撤感知仓位调整
+# ═══════════════════════════════════════════════════════════════
+
+def calc_drawdown_aware_position(
+    total_capital: float,
+    base_position_pct: float,
+    current_drawdown_pct: float,
+    max_position_pct: float = 30.0,
+    min_position_pct: float = 5.0,
+) -> Dict:
+    """
+    回撤感知仓位 — 「击败庄家」资金管理实践
+
+    当账户出现回撤时自动降低仓位，保护资金。
+    当恢复盈利时逐步恢复仓位。
+
+    规则 (Thorp风格):
+    - 回撤 < 5%:  维持基础仓位
+    - 回撤 5-15%: 降至基础仓位 × 0.7
+    - 回撤 15-30%: 降至基础仓位 × 0.4
+    - 回撤 > 30%:  降至最低仓位，专注恢复
+
+    Args:
+        total_capital: 总资金
+        base_position_pct: 基础仓位%
+        current_drawdown_pct: 当前回撤%
+        max_position_pct: 最大仓位上限%
+        min_position_pct: 最小仓位%
+
+    Returns:
+        dict: {adjusted_pct, adjusted_amount, discount, drawdown_level, ...}
+    """
+    base_pct = min(base_position_pct, max_position_pct)
+    base_pct = max(base_pct, min_position_pct)
+
+    # 回撤折扣表
+    if current_drawdown_pct < 5:
+        discount = 1.0
+        level = 'normal'
+    elif current_drawdown_pct < 10:
+        discount = 0.85
+        level = 'mild'
+    elif current_drawdown_pct < 15:
+        discount = 0.7
+        level = 'moderate'
+    elif current_drawdown_pct < 25:
+        discount = 0.5
+        level = 'significant'
+    elif current_drawdown_pct < 35:
+        discount = 0.35
+        level = 'severe'
+    else:
+        discount = 0.2
+        level = 'critical'
+
+    adjusted_pct = base_pct * discount
+    adjusted_pct = max(adjusted_pct, min_position_pct)
+    adjusted_amount = total_capital * adjusted_pct / 100
+
+    return {
+        'total_capital': round(total_capital, 2),
+        'base_position_pct': round(base_pct, 1),
+        'adjusted_position_pct': round(adjusted_pct, 1),
+        'adjusted_amount': round(adjusted_amount, 2),
+        'discount_factor': round(discount, 2),
+        'drawdown_level': level,
+        'current_drawdown_pct': round(current_drawdown_pct, 1),
+        'rule': f'回撤{level}级别 → 仓位系数 {discount:.0%}',
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# 6. 综合仓位+止损计算 (一站式)
+# ═══════════════════════════════════════════════════════════════
+
+def beat_the_dealer_full(
+    code: str,
+    total_capital: float,
+    entry_price: float = None,
+    target_price: float = None,
+    current_drawdown_pct: float = 0,
+    win_rate: float = None,
+    avg_win_pct: float = None,
+    avg_loss_pct: float = None,
+    sample_size: int = 30,
+    risk_profile: str = 'moderate',
+) -> Dict:
+    """
+    「击败庄家」一站式仓位+止损计算
+
+    完整流程:
+    1. 从K线估算历史交易统计 (如果没有提供 win_rate 等)
+    2. 计算期望值 (Edge)
+    3. 动态凯利仓位
+    4. 风险破产概率
+    5. 回撤感知调整
+    6. 多层止损
+
+    Args:
+        code: 股票代码
+        total_capital: 总资金
+        entry_price: 计划入场价 (默认用当前价)
+        target_price: 目标价
+        current_drawdown_pct: 账户当前回撤%
+        win_rate/avg_win/avg_loss: 手动提供交易统计
+        sample_size: 样本数 (用于不确定性调整)
+        risk_profile: 'conservative' | 'moderate' | 'aggressive'
+
+    Returns:
+        dict: 完整仓位+止损方案
+    """
+    result = {
+        'code': code,
+        'total_capital': round(total_capital, 2),
+        'risk_profile': risk_profile,
+        'generated_at': datetime.now().isoformat(),
+    }
+
+    try:
+        # 获取行情数据
+        kline = get_daily_kline(code, count=120)
+        if kline is None or len(kline) < 30:
+            result['error'] = 'K线数据不足'
+            return result
+
+        closes = kline['close'].values.astype(float)
+        current_price = closes[-1]
+
+        if entry_price is None:
+            entry_price = current_price
+
+        result['current_price'] = round(float(current_price), 2)
+        result['entry_price'] = round(entry_price, 2)
+
+        # Step 1: 估算交易统计 (如果没有手动提供)
+        if win_rate is None or avg_win_pct is None or avg_loss_pct is None:
+            returns = np.diff(closes) / closes[:-1]
+            returns = returns[~np.isnan(returns)]
+
+            if len(returns) >= 30:
+                wins = returns[returns > 0]
+                losses = returns[returns < 0]
+
+                if len(wins) > 0 and len(losses) > 0:
+                    est_win_rate = float(len(wins) / (len(wins) + len(losses)))
+                    est_avg_win = float(np.mean(wins)) * 100
+                    est_avg_loss = abs(float(np.mean(losses))) * 100
+
+                    if win_rate is None:
+                        win_rate = est_win_rate
+                    if avg_win_pct is None:
+                        avg_win_pct = est_avg_win
+                    if avg_loss_pct is None:
+                        avg_loss_pct = est_avg_loss
+
+                    result['estimated_from'] = {
+                        'method': 'daily_returns',
+                        'sample_days': len(returns),
+                    }
+                else:
+                    result['error'] = '无法从历史数据估算交易统计'
+                    return result
+            else:
+                result['error'] = '历史数据不足'
+                return result
+
+        result['trade_stats'] = {
+            'win_rate_pct': round(win_rate * 100, 1),
+            'avg_win_pct': round(avg_win_pct, 2),
+            'avg_loss_pct': round(avg_loss_pct, 2),
+            'sample_size': sample_size,
+        }
+
+        # Step 2: 期望值计算
+        edge_result = calc_trade_edge(
+            win_rate, avg_win_pct, avg_loss_pct,
+            entry_price=entry_price,
+            target_price=target_price,
+            stop_price=None,
+        )
+        result['edge_analysis'] = edge_result
+
+        # Step 3: 动态凯利
+        kelly_result = calc_dynamic_kelly(
+            win_rate, avg_win_pct, avg_loss_pct,
+            sample_size=sample_size,
+            current_drawdown_pct=current_drawdown_pct,
+        )
+        result['kelly_analysis'] = kelly_result
+
+        # Step 4: 根据风险偏好选择仓位比例
+        kelly_pct = kelly_result['adjusted_kelly_pct']
+        if risk_profile == 'conservative':
+            position_pct = kelly_pct * 0.5  # 1/4凯利
+        elif risk_profile == 'aggressive':
+            position_pct = kelly_pct * 2.0  # 接近全凯利
+        else:  # moderate
+            position_pct = kelly_pct  # 半凯利 (已在动态凯利中应用0.5)
+
+        position_pct = min(position_pct, 30.0)  # 单只上限30%
+        position_pct = max(position_pct, 3.0)   # 最低3%
+
+        # Step 5: 回撤感知调整
+        dd_result = calc_drawdown_aware_position(
+            total_capital, position_pct, current_drawdown_pct,
+        )
+        result['drawdown_adjustment'] = dd_result
+        final_position_pct = dd_result['adjusted_position_pct']
+        final_position_amount = total_capital * final_position_pct / 100
+
+        # Step 6: 风险破产概率
+        ror_result = calc_risk_of_ruin(
+            win_rate, avg_win_pct, avg_loss_pct,
+            position_pct=final_position_pct,
+        )
+        result['risk_of_ruin'] = ror_result
+
+        # Step 7: 多层止损
+        stop_result = calc_multi_tier_stop(
+            code, entry_price,
+            max_loss_pct=min(avg_loss_pct * 1.5, 10.0),
+        )
+        result['stop_loss_plan'] = stop_result
+
+        # Step 8: 最终建议
+        shares = int(final_position_amount / entry_price / 100) * 100  # 整手
+        if shares < 100:
+            shares = 0
+
+        actual_amount = shares * entry_price
+        actual_pct = actual_amount / total_capital * 100 if total_capital > 0 else 0
+
+        result['final_recommendation'] = {
+            'position_pct': round(final_position_pct, 1),
+            'position_amount': round(final_position_amount, 2),
+            'suggested_shares': shares,
+            'actual_amount': round(actual_amount, 2),
+            'actual_pct': round(actual_pct, 1),
+            'remaining_capital': round(total_capital - actual_amount, 2),
+        }
+
+        # 风险总结
+        if not edge_result.get('is_positive_edge'):
+            result['verdict'] = '🔴 不交易: 期望值为负'
+        elif ror_result.get('risk_of_ruin_pct', 100) > 15:
+            result['verdict'] = '🟠 期望值为正但破产风险偏高，建议降仓'
+        elif shares == 0:
+            result['verdict'] = '🟡 资金不足以买入1手(100股)'
+        else:
+            result['verdict'] = f'🟢 可交易: {shares}股, 仓位{actual_pct:.1f}%, 有效止损{stop_result.get("summary", {}).get("effective_stop_price", "N/A")}'
+
+        return result
+
+    except Exception as e:
+        result['error'] = f'{type(e).__name__}: {e}'
+        return result

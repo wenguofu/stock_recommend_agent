@@ -12,6 +12,7 @@ import os
 import time
 import traceback
 import logging
+import json
 
 warnings.filterwarnings('ignore')
 
@@ -22,7 +23,37 @@ logger = logging.getLogger(__name__)
 
 # 创建Flask应用
 app = Flask(__name__, static_folder=None)
-CORS(app)
+
+# 修复 numpy 类型 JSON 序列化问题
+import numpy as np
+
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
+app.json_encoder = NumpyEncoder
+# 同时 patch jsonify 的 default encoder
+app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
+
+# 修复 ARCH-08: CORS 白名单,生产环境不允许任意域访问
+# 优先级: 环境变量 ALLOWED_ORIGINS (逗号分隔) > 默认白名单
+_default_origins = [
+    "http://localhost:5173",   # Vite dev (前端默认)
+    "http://127.0.0.1:5173",
+    "http://localhost:35000",  # 同源部署
+    "http://127.0.0.1:35000",
+]
+_env_origins = os.environ.get("ALLOWED_ORIGINS", "").strip()
+ALLOWED_ORIGINS = [o.strip() for o in _env_origins.split(",") if o.strip()] or _default_origins
+CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
 
 app.config['JSON_AS_ASCII'] = False
 
@@ -104,6 +135,48 @@ def register_routes():
     # 注册定量估值API
     from valuation_routes import register_valuation_routes
     register_valuation_routes(app)
+    # Sprint4: 注册模型注册表 API
+    from model_registry import register_model_registry_routes
+    register_model_registry_routes(app)
+    # Sprint4: 注册 A/B 影子模式 API
+    from shadow_predictor import register_shadow_routes, ensure_shadow_log_table
+    ensure_shadow_log_table()
+    register_shadow_routes(app)
+    # Sprint4: 注册 ML 性能监控 API
+    from ml_monitor import register_ml_monitor_routes, ensure_ml_metrics_table
+    ensure_ml_metrics_table()
+    register_ml_monitor_routes(app)
+    # Sprint4: 注册 equity curve API
+    from equity_curve import register_equity_curve_routes, ensure_equity_curve_table
+    ensure_equity_curve_table()
+    register_equity_curve_routes(app)
+    # Sprint4: 注册 ML 可解释性 API
+    from ml_explain import register_ml_explain_routes
+    register_ml_explain_routes(app)
+    # Sprint4: 注册 ML 校准 API
+    from calibration_runtime import register_calibration_routes, ensure_calibration_table
+    ensure_calibration_table()
+    register_calibration_routes(app)
+    # Sprint4: 注册策略对比 API
+    from strategy_compare import register_strategy_compare_routes, ensure_strategy_compare_table
+    ensure_strategy_compare_table()
+    register_strategy_compare_routes(app)
+    # Sprint5: 注册组合优化 API
+    from portfolio_routes import register_portfolio_routes
+    register_portfolio_routes(app)
+    # Sprint5: 注册自动特征工程 API
+    from auto_features import register_auto_features_routes
+    register_auto_features_routes(app)
+    # Sprint5: 注册敏感度扫描 API
+    from sensitivity_scan import register_sensitivity_routes, ensure_sensitivity_table
+    ensure_sensitivity_table()
+    register_sensitivity_routes(app)
+    # Sprint5: 注册多通道告警推送 API
+    from alerting import register_alert_routes
+    register_alert_routes(app)
+    # Sprint5: 注册分布式缓存 API
+    from cache_redis import register_cache_routes
+    register_cache_routes(app)
 
 def init_database():
     """初始化数据库和默认配置"""
@@ -143,6 +216,6 @@ if __name__ == '__main__':
     print("调度器运行中...")
     print("=" * 60)
     if socketio:
-        socketio.run(app, host='0.0.0.0', port=PORT, debug=DEBUG)
+        socketio.run(app, host='0.0.0.0', port=PORT, debug=DEBUG, allow_unsafe_werkzeug=True)
     else:
         app.run(host='0.0.0.0', port=PORT, debug=DEBUG)

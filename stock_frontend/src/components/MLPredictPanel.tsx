@@ -1,5 +1,6 @@
 import { Card, Tag, Typography, Row, Col, Divider, Alert } from 'antd';
 import { RobotOutlined, ArrowUpOutlined, ArrowDownOutlined, MinusOutlined } from '@ant-design/icons';
+import { stockUpColor, stockDownColor, stockFlatColor } from '../constants/tokens';
 
 const { Text, Title } = Typography;
 
@@ -49,19 +50,19 @@ export default function MLPredictPanel({ mlData }: Props) {
         <Col span={6}>
           <Text type="secondary" style={{ fontSize: 12 }}>方向预测</Text>
           <br />
-          <Text strong style={{ fontSize: 16, color: mlData.direction === 'up' ? '#cf1322' : mlData.direction === 'down' ? '#3f8600' : '#888' }}>
+          <Text strong style={{ fontSize: 16, color: mlData.direction === 'up' ? stockUpColor : mlData.direction === 'down' ? stockDownColor : stockFlatColor }}>
             {dirLabel}
           </Text>
         </Col>
         <Col span={6}>
           <Text type="secondary" style={{ fontSize: 12 }}>上涨概率</Text>
           <br />
-          <Text strong style={{ color: '#cf1322' }}>{mlData.up_prob}%</Text>
+          <Text strong style={{ color: stockUpColor }}>{mlData.up_prob}%</Text>
         </Col>
         <Col span={6}>
           <Text type="secondary" style={{ fontSize: 12 }}>预测收益率</Text>
           <br />
-          <Text strong style={{ color: (mlData.predicted_return_pct ?? 0) >= 0 ? '#cf1322' : '#3f8600' }}>
+          <Text strong style={{ color: (mlData.predicted_return_pct ?? 0) >= 0 ? stockUpColor : stockDownColor }}>
             {mlData.predicted_return_pct != null
               ? `${mlData.predicted_return_pct > 0 ? '+' : ''}${mlData.predicted_return_pct}%`
               : 'N/A'}

@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Card, Table, Tag, Button, Space, Typography, Spin, Empty, Alert, Segmented } from "antd";
+import { App, Card, Table, Tag, Button, Space, Typography, Spin, Empty, Alert, Segmented } from "antd";
 import { ReloadOutlined, PlusOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 
@@ -40,6 +40,7 @@ const STRATEGY_TEXT_COLORS: Record<string, string> = {
 export default function Recommendations() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { message } = App.useApp();
   const [activeTab, setActiveTab] = useState<"daily" | "weekly">("daily");
 
   const { data, isLoading } = useQuery({
@@ -73,7 +74,7 @@ export default function Recommendations() {
       const accts = await r.json();
       const autoAcct = accts.accounts?.find((a: any) => a.auto_trade);
       if (!autoAcct) {
-        alert("没有自动跟踪账户，请先创建");
+        message.warning("没有自动跟踪账户，请先创建");
         return;
       }
       const r2 = await fetch(`${API_BASE}/api/paper/accounts/${autoAcct.id}/auto-rules`, {
@@ -90,10 +91,11 @@ export default function Recommendations() {
         }),
       });
       if (r2.ok) {
-        alert(`已将 ${name}(${code}) 加入自动跟踪`);
+        message.success(`已将 ${name}(${code}) 加入自动跟踪`);
+        queryClient.invalidateQueries({ queryKey: ["paper-accounts"] });
       }
     } catch (e) {
-      alert("添加跟踪失败");
+      message.error("添加跟踪失败");
     }
   };
 

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """每日/每周股票推荐生成脚本 - no_agent模式"""
 import sys, os, json, urllib.request
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+logger = logging.getLogger(__name__)
 
 sys.path.insert(0, '/Users/wgfu/work/a-stock-trading')
 from config import API_BASE
@@ -36,9 +40,9 @@ if is_monday and hour >= 15:
         resp = urllib.request.urlopen(req, timeout=180)
         result = json.loads(resp.read())
         if result.get("success"):
-            print(f"✅ 周推荐生成: {result['count']}条推荐, {result['total_unique']}只个股")
+            logger.info(f"✅ 周推荐生成: {result['count']}条推荐, {result['total_unique']}只个股")
     except Exception as e:
-        print(f"❌ 周推荐失败: {e}")
+        logger.error(f"❌ 周推荐失败: {e}", exc_info=False)
 
 # 每日推荐
 data = json.dumps({"type": "daily", "strategies": strategies, "top_n": 10}).encode()
@@ -51,7 +55,7 @@ try:
     resp = urllib.request.urlopen(req, timeout=180)
     result = json.loads(resp.read())
     if result.get("success") and result.get("count", 0) > 0:
-        print(f"📊 每日推荐生成: {result['count']}条推荐, {result['total_unique']}只个股")
-        print(f"策略: {', '.join(result['strategies'])}")
+        logger.info(f"📊 每日推荐生成: {result['count']}条推荐, {result['total_unique']}只个股")
+        logger.info(f"策略: {', '.join(result['strategies'])}")
 except Exception as e:
-    print(f"❌ 每日推荐失败: {e}")
+    logger.error(f"❌ 每日推荐失败: {e}", exc_info=False)

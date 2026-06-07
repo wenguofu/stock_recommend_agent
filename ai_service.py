@@ -5,6 +5,8 @@
 import requests
 import os
 import time
+import logging
+logger = logging.getLogger(__name__)
 from typing import Dict, Optional
 
 # ── Provider配置 ──
@@ -52,8 +54,10 @@ class AIService:
     # ═══════════════════════════════════════════
 
     @staticmethod
-    def _call_openai_compatible(url: str, api_key: str, model: str, prompt: str) -> str:
-        """通用OpenAI兼容API调用 (适用于 openai/deepseek/qwen/siliconflow/grok)"""
+    def _call_openai_compatible(url: str, api_key: str, model: str, prompt: str) -> Dict:
+        """通用OpenAI兼容API调用 (适用于 openai/deepseek/qwen/siliconflow/grok)
+        修复 Sprint3: 返回 dict {content, usage} 用于 token 追踪
+        """
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -66,20 +70,32 @@ class AIService:
         }
         response = requests.post(url, headers=headers, json=data, timeout=120)
         response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        resp_json = response.json()
+        content = resp_json["choices"][0]["message"]["content"]
+        usage = resp_json.get("usage", {})  # {prompt_tokens, completion_tokens, total_tokens}
+        return {"content": content, "usage": usage, "model": model}
 
     # ═══════════════════════════════════════════
     # Gemini (非OpenAI兼容格式)
     # ═══════════════════════════════════════════
 
     @staticmethod
-    def _call_gemini(api_key: str, model: str, prompt: str) -> str:
-        """调用Gemini API"""
+    def _call_gemini(api_key: str, model: str, prompt: str) -> Dict:
+        """调用Gemini API, 返回 dict {content, usage}"""
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         data = {"contents": [{"parts": [{"text": prompt}]}]}
         response = requests.post(url, json=data, timeout=120)
         response.raise_for_status()
-        return response.json()["candidates"][0]["content"]["parts"][0]["text"]
+        resp_json = response.json()
+        content = resp_json["candidates"][0]["content"]["parts"][0]["text"]
+        # Gemini usage 在 usageMetadata 字段
+        meta = resp_json.get("usageMetadata", {})
+        usage = {
+            "prompt_tokens": meta.get("promptTokenCount", 0),
+            "completion_tokens": meta.get("candidatesTokenCount", 0),
+            "total_tokens": meta.get("totalTokenCount", 0),
+        }
+        return {"content": content, "usage": usage, "model": model}
 
     # ═══════════════════════════════════════════
     # 统一调用接口
@@ -87,7 +103,7 @@ class AIService:
 
     @classmethod
     def call_agent(cls, provider: str, api_key: str, model: str, prompt: str) -> str:
-        """统一调用接口，自动重试可恢复的错误"""
+        """统一调用接口，自动重试可恢复的错误(修复 ARCH-09: 覆盖 HTTP 5xx/429/529)"""
         if provider == "gemini":
             call_fn = lambda: cls._call_gemini(api_key, model, prompt)
         elif provider in PROVIDER_CONFIG:
@@ -96,13 +112,47 @@ class AIService:
         else:
             raise ValueError(f"不支持的AI提供商: {provider}")
 
+        # 可重试错误: 超时、连接错、5xx、429/529
+        retriable_status = {408, 409, 425, 429, 500, 502, 503, 504, 529}
         last_error = None
-        for attempt in range(3):
+        max_attempts = int(os.environ.get("AI_MAX_RETRIES", "5"))
+        for attempt in range(max_attempts):
             try:
-                return call_fn()
-            except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as e:
+                result = call_fn()
+                # 修复 Sprint3: 记录 token 用量
+                try:
+                    from token_tracker import record_usage
+                    record_usage(
+                        provider=provider,
+                        model=result.get("model", model),
+                        usage=result.get("usage", {}),
+                    )
+                except Exception as track_err:
+                    # tracker 失败不影响主调用
+                    import logging
+                    logging.getLogger(__name__).warning(f"token tracker failed: {track_err}")
+                return result["content"]
+            except requests.exceptions.ReadTimeout as e:
                 last_error = e
-                time.sleep(1 + attempt * 2)
+                backoff = min(2 ** attempt, 30)
+                logger.warning(f"[ai_service] {provider} attempt {attempt+1}/{max_attempts} ReadTimeout, retry in {backoff}s")
+                time.sleep(backoff)
+            except requests.exceptions.ConnectionError as e:
+                last_error = e
+                backoff = min(2 ** attempt, 30)
+                logger.warning(f"[ai_service] {provider} attempt {attempt+1}/{max_attempts} ConnectionError, retry in {backoff}s")
+                time.sleep(backoff)
+            except requests.exceptions.HTTPError as e:
+                # 4xx/5xx: 4xx 业务错不重试,5xx/429 重试
+                status = e.response.status_code if e.response is not None else 0
+                if status in retriable_status:
+                    last_error = e
+                    backoff = min(2 ** attempt, 30)
+                    logger.warning(f"[ai_service] {provider} attempt {attempt+1}/{max_attempts} HTTP {status}, retry in {backoff}s")
+                    time.sleep(backoff)
+                else:
+                    # 4xx 业务错 (401/403/400) 直接抛
+                    raise
             except Exception as e:
                 last_error = e
                 break

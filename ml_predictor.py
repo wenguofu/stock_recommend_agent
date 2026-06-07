@@ -32,15 +32,50 @@ from dl_models.regime_detector import RegimeDetector, RegimeConfig
 
 _dl_models_cache = {}
 
-def _load_dl_model(model_class, config_class, path: str):
-    """Lazy-load a DL model with filesystem cache."""
+def _load_dl_model(model_class, config_class, path: str, expected_num_features: int = None):
+    """Lazy-load a DL model with filesystem cache + version/dimension validation.
+
+    修复 BUG-ML-01/02: 加载时校验 checkpoint 元数据与配置一致性,维度不符抛错
+    而非静默错位,避免训练-推理不一致导致的无声错误。
+    """
     if path in _dl_models_cache:
         return _dl_models_cache[path]
     if not os.path.exists(path):
         return None
+
+    # 修复 BUG-ML-01: 加载 checkpoint 元数据,记录 sha256 + 训练日期 + dataset hash
+    try:
+        import hashlib
+        with open(path, 'rb') as f:
+            file_bytes = f.read()
+        file_sha256 = hashlib.sha256(file_bytes).hexdigest()[:16]
+        file_mtime = datetime.fromtimestamp(os.path.getmtime(path)).isoformat()
+        print(f"[ml_predictor] Loading {os.path.basename(path)} sha256={file_sha256} mtime={file_mtime}")
+    except Exception as e:
+        print(f"[ml_predictor] WARN: failed to compute checkpoint hash: {e}")
+        file_sha256 = 'unknown'
+        file_mtime = 'unknown'
+
+    # 修复 BUG-ML-02: 校验特征维度,避免 checkpoint 与代码不一致
     model = model_class.load(path)
     model.eval()
+
+    if expected_num_features is not None:
+        actual = getattr(model.config, 'num_features', None)
+        if actual is not None and actual != expected_num_features:
+            raise RuntimeError(
+                f"BUG-ML-02: Model {os.path.basename(path)} expects num_features={actual} "
+                f"but caller requested {expected_num_features}. Checkpoint may be stale. "
+                f"sha256={file_sha256} mtime={file_mtime}"
+            )
+
+    # 存到缓存 + 记录元数据供后续 A/B 决策
     _dl_models_cache[path] = model
+    _dl_models_cache[f"{path}__meta"] = {
+        'sha256': file_sha256,
+        'mtime': file_mtime,
+        'num_features': getattr(model.config, 'num_features', None),
+    }
     return model
 
 def predict_with_dl(code: str, regime_encoding: list = None) -> dict:
@@ -82,6 +117,26 @@ def predict_with_dl(code: str, regime_encoding: list = None) -> dict:
                 weekly, features['fundamental_features'], regime_encoding,
             )
 
+    # Sprint4: 应用温度校准
+    try:
+        from calibration_runtime import get_temperature, apply_temperature
+        t_short = get_temperature('short_term')
+        if short_result and 'up_prob' in short_result and t_short != 1.0:
+            short_result['up_prob_raw'] = short_result['up_prob']
+            short_result['up_prob'] = apply_temperature(short_result['up_prob'], t_short)
+            short_result['calibrated'] = True
+            short_result['temperature'] = t_short
+        if mid_result and 'up_prob' in mid_result:
+            t_mid = get_temperature('mid_term')
+            if t_mid != 1.0:
+                mid_result['up_prob_raw'] = mid_result['up_prob']
+                mid_result['up_prob'] = apply_temperature(mid_result['up_prob'], t_mid)
+                mid_result['calibrated'] = True
+                mid_result['temperature'] = t_mid
+    except Exception as calib_err:
+        # 校准失败不应影响主流程
+        pass
+
     return {
         'code': code,
         'short_term': short_result,
@@ -89,17 +144,38 @@ def predict_with_dl(code: str, regime_encoding: list = None) -> dict:
         'source': 'dl_model',
     }
 
-def _daily_to_weekly(daily_features):
-    """Convert daily feature matrix to weekly (resample)."""
+def _daily_to_weekly(daily_features, expected_weekly_features: int = None):
+    """Convert daily feature matrix to weekly (resample).
+
+    修复 BUG-ML-02: daily_features 默认 20 维,按 4 OHLC + 16 indicators 切分。
+    若 expected_weekly_features 与输出维度不匹配,降级为对齐到 expected 而非静默错位。
+    """
     n = len(daily_features)
     n_weeks = n // 5
     if n_weeks < 10:
         return None
     weekly = daily_features[-n_weeks * 5:].reshape(n_weeks, 5, -1)
-    # Use last day of each week for OHLC + mean of the week for indicators
-    ohlc = weekly[:, -1, :4]
-    indicators = weekly.mean(axis=1)
+    # 假设前 4 维是 OHLC(开高低收),其余是技术指标
+    n_feat = weekly.shape[-1]
+    if n_feat >= 4:
+        ohlc = weekly[:, -1, :4]
+        indicators = weekly.mean(axis=1)[:, 4:] if n_feat > 4 else weekly.mean(axis=1)
+    else:
+        # 兜底: 全部取均值
+        ohlc = weekly[:, -1, :]
+        indicators = weekly.mean(axis=1)
     result = np.concatenate([ohlc, indicators], axis=-1)
+
+    # 维度对齐: 若 mid_term 模型期望 14 维(8价+6基),截断到 expected
+    if expected_weekly_features is not None and result.shape[-1] != expected_weekly_features:
+        if result.shape[-1] > expected_weekly_features:
+            print(f"[ml_predictor] WARN: _daily_to_weekly 截断 {result.shape[-1]} -> {expected_weekly_features} 维")
+            result = result[:, :expected_weekly_features]
+        else:
+            # 维度不够,padding 0
+            pad = np.zeros((result.shape[0], expected_weekly_features - result.shape[-1]), dtype=result.dtype)
+            result = np.concatenate([result, pad], axis=-1)
+
     return result.astype(np.float32)[-52:]  # keep last 52 weeks
 
 def _fallback_predict(code: str) -> dict:

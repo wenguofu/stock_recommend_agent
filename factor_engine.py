@@ -14,6 +14,8 @@
 
 import traceback
 import time
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime
 
 import numpy as np
@@ -90,7 +92,7 @@ def calculate_factors(code: str) -> dict:
             return result
 
         # 1. 获取日K线数据 (240天)
-        print(f"[Factor] 获取 {code} 日K线...")
+        logger.debug(f"[Factor] 获取 {code} 日K线...")
         daily_df = get_daily_kline(code, count=240)
         if daily_df is None or daily_df.empty or len(daily_df) < 30:
             result['error'] = f'K线数据不足 (需要>=30天, 实际{len(daily_df) if daily_df is not None else 0}天)'
@@ -280,7 +282,7 @@ def _calc_money_flow_strength(code: str, current_price: float) -> float:
         return 0.0
 
     except Exception as e:
-        print(f"[Factor] money_flow calc failed: {e}")
+        logger.warning(f"[Factor] money_flow calc failed: {e}")
         return 0.0
 
 
@@ -336,7 +338,7 @@ def _calc_fundamental_factors(code: str):
         return pe_percentile, roe
 
     except Exception as e:
-        print(f"[Factor] fundamental calc failed: {e}")
+        logger.warning(f"[Factor] fundamental calc failed: {e}")
         return None, None
 
 
@@ -1121,4 +1123,5 @@ if __name__ == '__main__':
     import sys
     code = sys.argv[1] if len(sys.argv) > 1 else '300433'
     text = get_rating_text(code)
-    print(text)
+    logger.info(f"因子评级输出:\n{text}")
+    print(text)  # CLI 输出

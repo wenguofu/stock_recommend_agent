@@ -1,6 +1,7 @@
 import { Descriptions, Tag, Statistic, Space, Card } from 'antd';
 import { ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons';
 import AIAnalyzeButton from './AIAnalyzeButton';
+import { stockUpColor, stockDownColor } from '../constants/tokens';
 
 interface StockHeaderProps {
   name?: string;
@@ -30,8 +31,8 @@ export default function StockHeader({
   amount,
 }: StockHeaderProps) {
   const isUp = (changePercent ?? 0) >= 0;
-  const upColor = '#cf1322';
-  const downColor = '#3f8600';
+  const upColor = stockUpColor;
+  const downColor = stockDownColor;
 
   return (
     <Card

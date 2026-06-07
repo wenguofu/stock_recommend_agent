@@ -16,6 +16,7 @@
 from flask import jsonify, request
 import json
 from datetime import datetime
+from sqlalchemy import text
 
 
 def register_midline_routes(app):
@@ -221,13 +222,13 @@ def register_midline_routes(app):
                 page = request.args.get('page', 1, type=int)
                 pageSize = request.args.get('pageSize', 15, type=int)
 
-                total_row = db.execute("SELECT COUNT(*) FROM trade_journal").fetchone()
+                total_row = db.execute(text("SELECT COUNT(*) FROM trade_journal")).fetchone()
                 total = total_row[0] if total_row else 0
 
                 offset = (page - 1) * pageSize
                 rows = db.execute(
-                    "SELECT * FROM trade_journal ORDER BY entry_date DESC LIMIT ? OFFSET ?",
-                    (pageSize, offset)
+                    text("SELECT * FROM trade_journal ORDER BY entry_date DESC LIMIT :limit OFFSET :offset"),
+                    {"limit": pageSize, "offset": offset},
                 ).fetchall()
                 return jsonify({
                     "data": [dict(r) for r in rows],
@@ -311,7 +312,7 @@ def register_midline_routes(app):
         db = SessionLocal()
         try:
             rows = db.execute(
-                "SELECT pnl, pnl_pct, direction FROM trade_journal WHERE pnl IS NOT NULL"
+                text("SELECT pnl, pnl_pct, direction FROM trade_journal WHERE pnl IS NOT NULL")
             ).fetchall()
 
             if not rows:

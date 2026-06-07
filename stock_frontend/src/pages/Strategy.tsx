@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { stockAPI } from '../services/api';
 import { Link, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { Button, Card, Table, Tag, Select, Modal, Form, Input, Space, Typography, Spin, Empty, Checkbox, Alert } from 'antd';
+import { Button, Card, Table, Tag, Select, Modal, Form, Input, Space, Typography, Spin, Empty, Checkbox, Alert, App } from 'antd';
 import { ReloadOutlined, WarningOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 
@@ -43,6 +43,7 @@ const TIME_OPTIONS = [
 ];
 
 export default function Strategy() {
+  const { message } = App.useApp();
   const [limitTime, setLimitTime] = useState('11:30');
   const [selectedCodes, setSelectedCodes] = useState<string[]>([]);
   const [showMultiModal, setShowMultiModal] = useState(false);
@@ -131,7 +132,7 @@ export default function Strategy() {
       setAddedMap((prev) => ({ ...prev, [code]: true }));
     } catch (e) {
       console.error('加入自选失败:', e);
-      alert('加入自选失败');
+      message.error('加入自选失败');
     } finally {
       setAddingMap((prev) => ({ ...prev, [code]: false }));
     }
@@ -203,7 +204,7 @@ export default function Strategy() {
       );
       setShowPaperModal(false);
       queryClient.invalidateQueries({ queryKey: ['paper-accounts'] });
-      alert(`已为 ${paperTargetStock.name} (${paperTargetStock.code}) 创建模拟盘计划`);
+      message.success(`已为 ${paperTargetStock.name} (${paperTargetStock.code}) 创建模拟盘计划`);
     } catch (e) {
       console.error('创建计划失败:', e);
       setPaperError('创建计划失败，请稍后重试');

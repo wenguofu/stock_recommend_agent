@@ -737,8 +737,11 @@ def _parse_intraday_t_prices(text: str):
 # ═══════════════════════════════════════════
 
 def register_debate_routes(app):
+    # 修复 ARCH-07: 在 LLM 端点挂载 rate_limit 装饰器,防止 LLM 暴力刷
+    from rate_limiter import rate_limit
 
     @app.route('/api/ai/models', methods=['GET'])
+    @rate_limit('default')
     def get_ai_models():
         """获取指定AI提供商的可用模型列表"""
         try:
@@ -767,6 +770,7 @@ def register_debate_routes(app):
             return jsonify({'success': False, 'error': error_msg}), 500
 
     @app.route('/api/ai/test', methods=['POST'])
+    @rate_limit('ai_analyze')
     def test_ai_connection():
         """测试AI服务连接"""
         try:
@@ -786,6 +790,7 @@ def register_debate_routes(app):
             return jsonify({'success': False, 'error': error_msg}), 500
 
     @app.route('/api/ai/debate/start/<code>', methods=['POST'])
+    @rate_limit('debate_start')
     def start_debate_job_api(code):
         """启动多Agent辩论任务（后台执行）"""
         try:
@@ -833,6 +838,7 @@ def register_debate_routes(app):
             return jsonify({'success': False, 'error': error_msg}), 500
 
     @app.route('/api/ai/debate/start_multi', methods=['POST'])
+    @rate_limit('debate_start')
     def start_multi_debate_job_api():
         """启动多选一辩论任务（后台执行）"""
         try:
