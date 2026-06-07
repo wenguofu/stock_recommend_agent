@@ -53,10 +53,11 @@ interface ValuationData {
   margin_of_safety: number;
   dcf_value: number;
   dcf_upside: number;
+  dcf_margin: number;             // Sprint 7: DCF 安全边际
   composite_score: number;
   rating: string;
   summary: string;
-  detail: Record<string, any>;
+  detail: Record<string, any>;    // Sprint 7: 包含 growth_class, base_pe, fair_pe
   forecast?: ForecastInResult;
 }
 
@@ -320,6 +321,11 @@ export default function ValuationPanel({ stockCode }: { stockCode?: string }) {
                   <Tag color={scoreColor(result.composite_score)} style={{ fontSize: 13 }}>
                     {result.rating}
                   </Tag>
+                  {result.detail?.growth_class && (
+                    <Tag color={result.detail.growth_class === 'growth' ? 'purple' : result.detail.growth_class === 'cyclical' ? 'orange' : 'blue'}>
+                      {result.detail.growth_class === 'growth' ? '成长股' : result.detail.growth_class === 'cyclical' ? '周期股' : '价值股'}
+                    </Tag>
+                  )}
                   {result.forecast?.has_data && (
                     <Tag color="green" icon={<ThunderboltOutlined />}>
                       已用机构预测
@@ -338,10 +344,11 @@ export default function ValuationPanel({ stockCode }: { stockCode?: string }) {
               </Text>
               <br /><Text type="secondary" style={{ fontSize: 11 }}>{result.peg_verdict}</Text>
             </Descriptions.Item>
-            <Descriptions.Item label="安全边际">
-              <Text strong style={{ color: result.margin_of_safety >= 0 ? '#52c41a' : '#ff4d4f' }}>
-                {result.margin_of_safety >= 0 ? '+' : ''}{result.margin_of_safety?.toFixed(1)}%
+            <Descriptions.Item label="DCF安全边际">
+              <Text strong style={{ color: result.dcf_margin >= 0 ? '#52c41a' : '#ff4d4f' }}>
+                {result.dcf_margin >= 0 ? '+' : ''}{result.dcf_margin?.toFixed(1)}%
               </Text>
+              <br /><Text type="secondary" style={{ fontSize: 11 }}>(DCF − 现价) / DCF</Text>
             </Descriptions.Item>
             <Descriptions.Item label="Forward PE (6m)">
               {result.forward_pe_6m > 0 ? (
@@ -353,19 +360,27 @@ export default function ValuationPanel({ stockCode }: { stockCode?: string }) {
                 <span>{result.forward_pe_1y?.toFixed(1)} <RiseOutlined style={{ color: result.forward_pe_1y < result.current_pe ? '#52c41a' : '#ff4d4f' }} /></span>
               ) : '—'}
             </Descriptions.Item>
-            <Descriptions.Item label="公允价值(基准)">
-              ¥{result.fair_value_current?.toFixed(2)}
-            </Descriptions.Item>
             <Descriptions.Item label="公允价值(成长调整)">
               <Text strong>¥{result.fair_value_growth?.toFixed(2)}</Text>
             </Descriptions.Item>
             <Descriptions.Item label="DCF估值">
               ¥{result.dcf_value?.toFixed(2)}
             </Descriptions.Item>
-            <Descriptions.Item label="DCF上行空间">
-              <Text style={{ color: (result.dcf_upside || 0) >= 0 ? '#52c41a' : '#ff4d4f' }}>
-                {(result.dcf_upside || 0) >= 0 ? '+' : ''}{result.dcf_upside?.toFixed(1)}%
+            <Descriptions.Item label={
+              <span>
+                公允价值(基准)
+                <Text type="secondary" style={{ fontSize: 10, marginLeft: 4 }}>
+                  ⓘ 无增长假设
+                </Text>
+              </span>
+            }>
+              <Text type="secondary">¥{result.fair_value_current?.toFixed(2)}</Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="成长安全边际">
+              <Text style={{ color: result.margin_of_safety >= 0 ? '#52c41a' : '#ff4d4f', fontSize: 13 }}>
+                {result.margin_of_safety >= 0 ? '+' : ''}{result.margin_of_safety?.toFixed(1)}%
               </Text>
+              <br /><Text type="secondary" style={{ fontSize: 10 }}>相对 fair_value_growth</Text>
             </Descriptions.Item>
           </Descriptions>
 
@@ -442,11 +457,20 @@ export default function ValuationPanel({ stockCode }: { stockCode?: string }) {
 
           {/* 估值逻辑说明 */}
           <Paragraph type="secondary" style={{ marginTop: 12, fontSize: 12 }}>
-            <Text strong>计算逻辑：</Text>
-            Forward PE = 当前PE / (1 + 行业利润增速%)；
-            PEG = PE / 增速%（{'>'}1低估，1-2合理，{'>'}2高估）；
-            成长调整公允价值 = EPS × 合理PE基准 × (1 + 增速调整)；
-            DCF简化版 = 3年自由现金流(EPS×0.7)折现(WACC=10%) + 永续终值。
+            <Text strong>计算逻辑 (Sprint 7)：</Text>
+            <br />
+            1. <Text strong>成长股分类</Text>：根据行业(AI/光模块/PCB等)、机构预测增速、ROE 综合判定
+            (本股: {result.detail?.growth_class_label || '—'}, base_pe={result.detail?.base_pe || '—'})
+            <br />
+            2. <Text strong>Forward PE</Text> = 当前PE / (1 + 行业利润增速%)；
+            <Text strong>PEG</Text> = PE / 增速%（{'>'}1低估，1-2合理，{'>'}2高估）
+            <br />
+            3. <Text strong>成长调整公允价值</Text> = EPS × base_pe × (1 + 增速调整)
+            （{result.detail?.growth_class === 'growth' ? '成长股' : '非成长股'}上限 = base_pe × {result.detail?.growth_class === 'growth' ? '5' : result.detail?.growth_class === 'cyclical' ? '1.5' : '2'}）
+            <br />
+            4. <Text strong>DCF 简化版</Text> = 3年自由现金流(EPS × 0.7)折现(WACC=10%) + 永续终值(增长率3%)
+            <br />
+            5. <Text strong>综合评分</Text> = 50 + DCF(25) + PEG(20) + 成长安全边际(20) + 机构一致性(15) + ROE(5) + 行业展望(5) + Forward PE(5) + 动量(5)
             {result.forecast?.has_data && (
               <>
                 <br />

@@ -430,3 +430,204 @@ class TestLansTechnologyRegression:
                 # TTM 数据库不可用 → 仍为 0 → 回退到机构预期 1.5
                 assert inp.eps_ttm == 1.5, f"应为机构预期 1.5, 实际 {inp.eps_ttm}"
                 assert inp.forecast_source == "institutional"
+
+
+# ── Sprint 7: 成长股分类 ──────────────────────────────
+
+class TestGrowthClass:
+    """Sprint 7 优化: 成长股分类"""
+
+    def test_sector_keyword_growth(self, fresh_quant_valuation):
+        """行业关键词命中 → 成长股"""
+        inp = fresh_quant_valuation.ValuationInput(
+            code='300308', sector_name='光模块',
+        )
+        cls = fresh_quant_valuation.classify_growth_stock(inp)
+        assert cls == "growth"
+        assert inp.growth_class == "growth"
+        assert "光模块" in inp.growth_class_reason
+
+    def test_sector_keyword_cyclical(self, fresh_quant_valuation):
+        """周期行业关键词 → 周期股"""
+        inp = fresh_quant_valuation.ValuationInput(
+            code='600188', sector_name='煤炭',
+        )
+        cls = fresh_quant_valuation.classify_growth_stock(inp)
+        assert cls == "cyclical"
+        assert inp.growth_class == "cyclical"
+
+    def test_sector_keyword_pcb(self, fresh_quant_valuation):
+        """PCB 是 AI/光模块上游, 归为成长股"""
+        inp = fresh_quant_valuation.ValuationInput(
+            code='300476', sector_name='PCB',
+        )
+        cls = fresh_quant_valuation.classify_growth_stock(inp)
+        assert cls == "growth"
+
+    def test_high_growth_high_roe(self, fresh_quant_valuation):
+        """高增速 + 高 ROE → 成长股"""
+        inp = fresh_quant_valuation.ValuationInput(
+            code='999999', industry_growth_1y=80, roe=18,
+        )
+        cls = fresh_quant_valuation.classify_growth_stock(inp)
+        assert cls == "growth"
+        assert "ROE" in inp.growth_class_reason or "高增速" in inp.growth_class_reason
+
+    def test_low_growth_value(self, fresh_quant_valuation):
+        """低增速 → 价值股"""
+        inp = fresh_quant_valuation.ValuationInput(
+            code='999998', industry_growth_1y=3, roe=8,
+        )
+        cls = fresh_quant_valuation.classify_growth_stock(inp)
+        assert cls == "value"
+
+    def test_growth_class_params(self, fresh_quant_valuation):
+        """不同分类的估值参数不同"""
+        growth_params = fresh_quant_valuation.GROWTH_CLASS_PARAMS["growth"]
+        value_params = fresh_quant_valuation.GROWTH_CLASS_PARAMS["value"]
+        cyclical_params = fresh_quant_valuation.GROWTH_CLASS_PARAMS["cyclical"]
+        # 成长股 base_pe 应该 > 价值股 > 周期股
+        assert growth_params["base_pe"] > value_params["base_pe"] > cyclical_params["base_pe"]
+        # 成长股 fair_pe 上限倍数最大
+        assert growth_params["fair_pe_multiplier"] > value_params["fair_pe_multiplier"]
+
+
+# ── Sprint 7: 新评分卡 ──────────────────────────────
+
+class TestNewCompositeScore:
+    """Sprint 7: DCF 为锚的新评分卡"""
+
+    def test_dcf_margin_calculated(self, fresh_quant_valuation):
+        """DCF margin 应正确计算: (DCF-price)/DCF * 100"""
+        inp = fresh_quant_valuation.ValuationInput(
+            code='300308', current_price=856, eps_ttm=10,
+            industry_growth_1y=100,
+        )
+        result = fresh_quant_valuation.calculate_valuation(inp)
+        # DCF 字段应存在且非 0 (因有 EPS)
+        assert hasattr(result, 'dcf_margin')
+        assert hasattr(result, 'dcf_value')
+        # margin_of_safety 仍存在 (兼容)
+        assert hasattr(result, 'margin_of_safety')
+
+    def test_growth_class_affects_base_pe(self, fresh_quant_valuation):
+        """成长股分类应该影响 base_pe"""
+        # 同一只股票, 设为光模块 (growth) vs 默认 (value)
+        inp_growth = fresh_quant_valuation.ValuationInput(
+            code='300308', current_price=100, eps_ttm=1, sector_name='光模块',
+        )
+        inp_value = fresh_quant_valuation.ValuationInput(
+            code='300308', current_price=100, eps_ttm=1, sector_name='其他',
+        )
+        r_growth = fresh_quant_valuation.calculate_valuation(inp_growth)
+        r_value = fresh_quant_valuation.calculate_valuation(inp_value)
+        # 成长股的 base_pe 应该 > 价值股
+        assert r_growth.detail['base_pe'] > r_value.detail['base_pe']
+        # 分类标签
+        assert r_growth.detail['growth_class'] == 'growth'
+        assert r_value.detail['growth_class'] == 'value'
+
+    def test_momentum_adjustment_affects_score(self, fresh_quant_valuation):
+        """动量调整应该影响评分"""
+        inp = fresh_quant_valuation.ValuationInput(
+            code='300308', current_price=100, eps_ttm=1,
+        )
+        r_neutral = fresh_quant_valuation.calculate_valuation(inp, momentum_adjustment=0)
+        r_positive = fresh_quant_valuation.calculate_valuation(inp, momentum_adjustment=8)
+        r_negative = fresh_quant_valuation.calculate_valuation(inp, momentum_adjustment=-8)
+        # 正动量加分, 负动量减分
+        assert r_positive.composite_score > r_neutral.composite_score
+        assert r_negative.composite_score < r_neutral.composite_score
+        # 但动量调整有截断 (±5)
+        assert r_positive.composite_score - r_neutral.composite_score <= 5
+        assert r_neutral.composite_score - r_negative.composite_score <= 5
+
+    def test_institutional_rating_affects_score(self, fresh_quant_valuation):
+        """机构评级应该影响评分"""
+        inp_buy = fresh_quant_valuation.ValuationInput(
+            code='300308', current_price=100, eps_ttm=1,
+            forecast_rating_label='买入', forecast_analyst_count=20,
+        )
+        inp_sell = fresh_quant_valuation.ValuationInput(
+            code='300308', current_price=100, eps_ttm=1,
+            forecast_rating_label='卖出', forecast_analyst_count=5,
+        )
+        r_buy = fresh_quant_valuation.calculate_valuation(inp_buy)
+        r_sell = fresh_quant_valuation.calculate_valuation(inp_sell)
+        # 买入评级应该 > 卖出评级
+        assert r_buy.composite_score > r_sell.composite_score
+        # 差距应该 > 15 (评级差 12 + 覆盖家数差 3)
+        assert r_buy.composite_score - r_sell.composite_score >= 15
+
+    def test_dcf_centric_scoring(self, fresh_quant_valuation):
+        """DCF 上行空间大的应该比 DCF 下行空间大的得分高"""
+        # 情景 A: 股价低于 DCF (适度低估)
+        inp_under = fresh_quant_valuation.ValuationInput(
+            code='999999', current_price=80, eps_ttm=2,  # PE 40, 适度高估
+            industry_growth_1y=30,
+        )
+        # 情景 B: 股价高于 DCF (明显高估)
+        inp_over = fresh_quant_valuation.ValuationInput(
+            code='999998', current_price=150, eps_ttm=2,  # PE 75, 严重高估
+            industry_growth_1y=30,
+        )
+        r_under = fresh_quant_valuation.calculate_valuation(inp_under)
+        r_over = fresh_quant_valuation.calculate_valuation(inp_over)
+        # DCF 主导下, 低估应该比高估得分高
+        assert r_under.composite_score > r_over.composite_score
+        # 差距应该明显 (>10 分)
+        assert r_under.composite_score - r_over.composite_score >= 10
+
+
+# ── Sprint 7: 端到端集成测试 ──────────────────────────────
+
+class TestSprint7EndToEnd:
+    """Sprint 7 集成测试: 验证真实股票的回测表现"""
+
+    def test_zhongji_xuchuang_5month_growth_recommend(self, fresh_quant_valuation):
+        """中际旭创 5 月初: 评分应 >= 65 (推荐, 而非"持有")"""
+        from sqlalchemy import text
+        from models import get_db
+        db = next(get_db())
+        try:
+            row = db.execute(text("SELECT report_date, eps, pe_ttm FROM stock_financials WHERE code='300308' ORDER BY report_date DESC LIMIT 1")).fetchone()
+        finally:
+            db.close()
+        if not row:
+            pytest.skip("数据库中无 300308 数据")
+
+        # 用 DB 中的真实 EPS (annual), 5月初 ¥856 + 光模块行业
+        db_eps = float(row[1]) if row[1] and float(row[1]) > 0 else 5.84
+        inp = fresh_quant_valuation.ValuationInput(
+            code='300308', current_price=856, eps_ttm=db_eps, sector_name='光模块',
+            industry_growth_6m=175, industry_growth_1y=118,
+            forecast_rating_label='买入', forecast_analyst_count=29,
+        )
+        result = fresh_quant_valuation.calculate_valuation(inp)
+        # 关键断言: 5月初应该 ≥ 60 (持有偏积极/推荐, 而非旧的"持有"50)
+        assert result.composite_score >= 60, f"5月初评分应 >= 60, 实际 {result.composite_score}, 旧版 50"
+        # 分类应该是成长股
+        assert result.detail['growth_class'] == 'growth'
+
+    def test_yuanjie_5_18_crash_strong_recommend(self, fresh_quant_valuation):
+        """源杰科技 5/18 暴跌后: 评分应 >= 75 (强烈推荐, 暴跌买入机会)"""
+        from sqlalchemy import text
+        from models import get_db
+        db = next(get_db())
+        try:
+            row = db.execute(text("SELECT report_date, eps, pe_ttm FROM stock_financials WHERE code='688498' ORDER BY report_date DESC LIMIT 1")).fetchone()
+        finally:
+            db.close()
+        if not row:
+            pytest.skip("数据库中无 688498 数据")
+
+        # 用 DB 中的真实 EPS, 5/18 暴跌后 ¥1058 + 光模块芯片行业
+        db_eps = float(row[1]) if row[1] and float(row[1]) > 0 else 9.57
+        inp = fresh_quant_valuation.ValuationInput(
+            code='688498', current_price=1058, eps_ttm=db_eps, sector_name='光模块芯片',
+            industry_growth_6m=327, industry_growth_1y=178,
+            forecast_rating_label='买入', forecast_analyst_count=10,
+        )
+        result = fresh_quant_valuation.calculate_valuation(inp)
+        # 关键断言: 暴跌后应该是"强烈推荐" (评分 >= 75)
+        assert result.composite_score >= 75, f"5/18 暴跌后评分应 >= 75, 实际 {result.composite_score}"

@@ -128,6 +128,7 @@ def register_valuation_routes(app):
                     'margin_of_safety': result.margin_of_safety,
                     'dcf_value': result.dcf_value,
                     'dcf_upside': result.dcf_upside,
+                    'dcf_margin': result.dcf_margin,
                     'composite_score': result.composite_score,
                     'rating': result.rating,
                     'summary': result.summary,

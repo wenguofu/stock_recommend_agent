@@ -44,6 +44,10 @@ class ValuationInput:
     # 可选：板块名称用于自动推断
     sector_name: str = ""
 
+    # Sprint 7: 成长股分类
+    growth_class: str = ""            # "growth" / "value" / "cyclical" / "" (待推断)
+    growth_class_reason: str = ""     # 分类理由, 供前端展示
+
     # 机构预测元数据 (Sprint 6 优化: 自动使用机构预测净利润)
     forecast_source: str = ""        # "institutional" / "user" / "none"
     forecast_net_profit_2025a: float = 0.0   # 机构预测: 2025A 实际净利润(亿)
@@ -75,6 +79,7 @@ class ValuationResult:
     # DCF简化版
     dcf_value: float = 0.0
     dcf_upside: float = 0.0         # DCF相对当前价格的上行空间(%)
+    dcf_margin: float = 0.0         # Sprint 7: DCF安全边际 (DCF-price)/DCF
 
     # 综合评分
     composite_score: float = 0.0     # 0-100
@@ -93,7 +98,129 @@ def _safe_float(v, default=0.0):
         return default
 
 
-def calculate_valuation(inp: ValuationInput) -> ValuationResult:
+# ── 成长股分类 (Sprint 7 P0) ──────────────────────────────
+# 行业关键词: 命中 → 倾向 growth
+GROWTH_SECTOR_KEYWORDS = [
+    "AI", "人工智能", "光模块", "光通信", "CPO", "光器件",
+    "半导体", "芯片", "集成电路", "IC设计", "存储", "封测",
+    "创新药", "生物医药", "CXO", "医疗器械", "疫苗",
+    "新能源", "锂电池", "光伏", "储能", "氢能", "钠电",
+    "机器人", "减速器", "机器视觉",
+    "卫星", "商业航天", "低空",
+    "数字经济", "数据要素", "信创", "网络安全", "鸿蒙",
+    "PCB", "先进封装",
+    "无人驾驶", "智能驾驶", "车路云",
+    "固态电池",
+    "量子",
+    "AR", "VR", "XR", "折叠屏",
+]
+
+# 行业关键词: 命中 → 倾向 cyclical
+CYCLICAL_SECTOR_KEYWORDS = [
+    "煤炭", "钢铁", "有色", "化工", "化纤", "造纸", "玻璃",
+    "水泥", "建材", "工程机械", "航运", "航空", "化工",
+    "猪肉", "鸡苗", "养殖", "种业", "饲料", "农产品",
+    "石油", "石化", "天然气",
+    "汽车整车", "地产", "银行", "保险", "证券", "多元金融",
+    "稀土", "锂矿", "钴", "镍",
+    "影视", "游戏", "传媒", "广告",
+]
+
+
+def classify_growth_stock(inp: ValuationInput) -> str:
+    """
+    综合判定股票属于 growth / value / cyclical
+
+    判定规则 (按优先级):
+      1. 行业关键词命中 → 直接分类
+      2. 机构预测增速:
+         - 增速 > 50% (且 ROE > 10%) → growth
+         - 增速 < 5% → value
+         - 增速中等 → 看 ROE
+      3. ROE:
+         - > 15% + 增速 > 20% → growth
+         - < 5% → value
+      4. 默认 → value (保守)
+    """
+    reasons = []
+    sector = (inp.sector_name or "").strip()
+
+    # 1. 行业关键词 (最强信号)
+    sector_lower = sector.lower()
+    for kw in GROWTH_SECTOR_KEYWORDS:
+        if kw in sector or kw.lower() in sector_lower:
+            inp.growth_class = "growth"
+            inp.growth_class_reason = f"行业 [{sector}] 命中成长股关键词 [{kw}]"
+            return "growth"
+    for kw in CYCLICAL_SECTOR_KEYWORDS:
+        if kw in sector or kw.lower() in sector_lower:
+            inp.growth_class = "cyclical"
+            inp.growth_class_reason = f"行业 [{sector}] 命中周期股关键词 [{kw}]"
+            return "cyclical"
+
+    # 2. 增速判定
+    growth = inp.industry_growth_1y  # 1y 年化增速
+    if growth == 0 and inp.forecast_net_profit_2025a > 0 and inp.forecast_net_profit_2026e > 0:
+        # 从机构预测重算 1y 增速
+        growth = (inp.forecast_net_profit_2026e - inp.forecast_net_profit_2025a) / inp.forecast_net_profit_2025a * 100
+    if growth == 0 and inp.forecast_eps_2026e > 0 and inp.eps_ttm > 0:
+        growth = (inp.forecast_eps_2026e - inp.eps_ttm) / inp.eps_ttm * 100
+
+    if growth > 50 and inp.roe >= 10:
+        inp.growth_class = "growth"
+        inp.growth_class_reason = f"高增速 {growth:.0f}% + ROE {inp.roe:.1f}% → 成长股"
+        return "growth"
+    if growth < 5 and growth != 0:
+        inp.growth_class = "value"
+        inp.growth_class_reason = f"低增速 {growth:.1f}% → 价值股"
+        return "value"
+
+    # 3. ROE 判定
+    if inp.roe >= 15 and growth >= 20:
+        inp.growth_class = "growth"
+        inp.growth_class_reason = f"ROE {inp.roe:.1f}% + 增速 {growth:.0f}% → 成长股"
+        return "growth"
+    if inp.roe > 0 and inp.roe < 5 and growth < 15:
+        inp.growth_class = "value"
+        inp.growth_class_reason = f"ROE {inp.roe:.1f}% 低 + 增速 {growth:.0f}% 低 → 价值股"
+        return "value"
+
+    # 4. 中等增速 + 中等 ROE, 倾向 growth (A股大部分高增长票都是这种)
+    if growth > 15:
+        inp.growth_class = "growth"
+        inp.growth_class_reason = f"中等增速 {growth:.0f}% → 倾向成长股 (待行业确认)"
+        return "growth"
+
+    # 默认: value
+    inp.growth_class = "value"
+    inp.growth_class_reason = f"无明显信号 (增速 {growth:.0f}%, ROE {inp.roe:.1f}%) → 默认价值股"
+    return "value"
+
+
+# 不同分类的估值参数
+GROWTH_CLASS_PARAMS = {
+    "growth": {
+        "base_pe": 30,         # 成长股合理基准 PE (光模块/AI 龙头 PE 30-50 是常态)
+        "fair_pe_multiplier": 5.0,  # fair_pe 上限 = base_pe × 5
+        "score_bonus": 0,      # 不额外加分 (避免双重计算)
+        "label": "成长股",
+    },
+    "value": {
+        "base_pe": 15,         # 价值股合理基准 PE
+        "fair_pe_multiplier": 2.0,
+        "score_bonus": 0,
+        "label": "价值股",
+    },
+    "cyclical": {
+        "base_pe": 12,         # 周期股合理基准 PE (取 PB 估值更合适)
+        "fair_pe_multiplier": 1.5,
+        "score_bonus": 0,
+        "label": "周期股",
+    },
+}
+
+
+def calculate_valuation(inp: ValuationInput, momentum_adjustment: float = 0) -> ValuationResult:
     """
     核心估值计算。
 
@@ -104,6 +231,12 @@ def calculate_valuation(inp: ValuationInput) -> ValuationResult:
     PEG逻辑:
       PEG = PE / 盈利增速(%)
       PEG < 0.5: 极度低估, < 1: 合理偏低, 1-2: 合理, > 2: 高估
+
+    Args:
+        inp: 估值输入参数
+        momentum_adjustment: 动量调整分 (-10 ~ +10), 来自短期价格趋势分析
+                            + 正分: 趋势向上/暴跌反弹
+                            - 负分: 顶部背离/追高风险
     """
     result = ValuationResult()
 
@@ -162,20 +295,27 @@ def calculate_valuation(inp: ValuationInput) -> ValuationResult:
         result.peg_verdict = "严重高估 — 即使考虑成长性也偏贵"
 
     # ── 3. 成长调整公允价值 ──
-    # 合理PE基准: 取行业平均PE或15-25倍为参考
-    # 成长调整: 增速每10%给1.2倍PE溢价（PEG=1时的合理PE）
-    base_pe = 20  # A股合理基准PE
-    if inp.sector_outlook == 'S':
-        base_pe = 25
-    elif inp.sector_outlook == 'A':
-        base_pe = 22
-    elif inp.sector_outlook == 'B':
-        base_pe = 18
-    elif inp.sector_outlook == 'C':
-        base_pe = 15
+    # Sprint 7: 先做成长股分类, 再用对应类别的 base_pe
+    if not inp.growth_class:
+        classify_growth_stock(inp)
 
-    # 成长调整: fair_pe = base_pe × (1 + growth_rate/100) 但上限base_pe×3
-    fair_pe = min(base_pe * (1 + effective_growth / 100), base_pe * 3) if effective_growth > 0 else base_pe
+    class_params = GROWTH_CLASS_PARAMS.get(inp.growth_class, GROWTH_CLASS_PARAMS["value"])
+    base_pe = class_params["base_pe"]
+    fair_pe_multiplier = class_params["fair_pe_multiplier"]
+
+    # 行业展望微调 (±3)
+    if inp.sector_outlook == 'S':
+        base_pe += 3
+    elif inp.sector_outlook == 'A':
+        base_pe += 1
+    elif inp.sector_outlook == 'C':
+        base_pe -= 3
+
+    # 成长调整: fair_pe = base_pe × (1 + growth_rate/100) 但上限 base_pe × multiplier
+    if effective_growth > 0:
+        fair_pe = min(base_pe * (1 + effective_growth / 100), base_pe * fair_pe_multiplier)
+    else:
+        fair_pe = base_pe
 
     if eps > 0:
         result.fair_value_current = round(eps * base_pe, 2)
@@ -189,6 +329,17 @@ def calculate_valuation(inp: ValuationInput) -> ValuationResult:
     result.detail['base_pe'] = base_pe
     result.detail['fair_pe'] = round(fair_pe, 1)
     result.detail['sector_outlook'] = inp.sector_outlook or 'N/A'
+    # Sprint 7: 成长股分类
+    result.detail['growth_class'] = inp.growth_class
+    result.detail['growth_class_reason'] = inp.growth_class_reason
+    result.detail['growth_class_label'] = class_params.get("label", "")
+    # Sprint 7: 标记 fair_value_current 为"无增长假设参考" (对成长股有误导)
+    # 真正的安全边际应以 DCF 为锚
+    result.detail['fair_value_current_is_baseline'] = True
+    result.detail['fair_value_current_note'] = (
+        "无增长假设参考值 (适用低速/无增长资产). "
+        "对高成长股, 请参考 fair_value_growth 和 dcf_value"
+    )
 
     # ── 4. DCF简化版 ──
     # 假设: 当前自由现金流 = EPS × 0.7 (简化), 折现率10%, 永续增长率3%
@@ -211,76 +362,134 @@ def calculate_valuation(inp: ValuationInput) -> ValuationResult:
         result.dcf_value = round(dcf_sum + terminal_pv, 2)
         if price > 0:
             result.dcf_upside = round((result.dcf_value / price - 1) * 100, 1)
+            # Sprint 7: DCF 安全边际 (DCF - price) / DCF, 是更可靠的安全边际指标
+            result.dcf_margin = round((result.dcf_value - price) / result.dcf_value * 100, 1)
 
         result.detail['dcf_annual_fcf'] = round(fcf, 4)
         result.detail['dcf_discount_rate'] = discount_rate
+        result.detail['dcf_terminal_growth'] = terminal_growth
 
-    # ── 5. 综合评分 ──
+    # ── 5. 综合评分 (Sprint 7: DCF 为锚, 提升机构一致性维度) ──
+    # 总分 100, 基准 50
+    #   DCF 上行/下行空间   25 分 (新增主权重)
+    #   PEG 估值合理性     20 分
+    #   成长安全边际       20 分
+    #   机构一致性         15 分 (新增)
+    #   ROE 质量            5 分
+    #   行业展望            5 分
+    #   Forward PE 1y       5 分
+    #   动量/趋势           5 分 (新增, 由 momentum_adjustment 传入)
     score = 50  # 基准分
 
-    # PEG贡献 (最高+25)
+    # ── DCF 价值锚 (25 分) ──
+    # DCF 是未来现金流的折现, 是估值最可靠的锚
+    # dcf_upside = (dcf - price) / price * 100
+    if result.dcf_upside > 50:
+        score += 25
+    elif result.dcf_upside > 20:
+        score += 18
+    elif result.dcf_upside > 5:
+        score += 10
+    elif result.dcf_upside > -5:
+        score += 0
+    elif result.dcf_upside > -20:
+        score -= 10
+    elif result.dcf_upside > -40:
+        score -= 18
+    else:
+        score -= 25
+
+    # ── PEG 估值合理性 (20 分) ──
     if result.peg_ratio > 0:
         if result.peg_ratio < 0.5:
-            score += 25
+            score += 20
+        elif result.peg_ratio < 0.8:
+            score += 14
         elif result.peg_ratio < 1.0:
-            score += 15
+            score += 7
         elif result.peg_ratio < 1.5:
-            score += 5
-        elif result.peg_ratio < 2.0:
             score += 0
+        elif result.peg_ratio < 2.0:
+            score -= 7
         elif result.peg_ratio < 3.0:
-            score -= 10
+            score -= 14
         else:
             score -= 20
 
-    # 安全边际贡献 (最高+15)
-    if result.margin_of_safety > 30:
-        score += 15
-    elif result.margin_of_safety > 10:
-        score += 10
+    # ── 成长安全边际 (20 分) ──
+    # margin_of_safety = (fair_value_growth - price) / fair_value_growth
+    if result.margin_of_safety > 50:
+        score += 20
+    elif result.margin_of_safety > 20:
+        score += 14
     elif result.margin_of_safety > 0:
-        score += 5
-    elif result.margin_of_safety > -10:
-        score += 0
-    elif result.margin_of_safety > -30:
-        score -= 10
+        score += 6
+    elif result.margin_of_safety > -20:
+        score -= 4
+    elif result.margin_of_safety > -50:
+        score -= 12
     else:
         score -= 20
 
-    # ROE/质量贡献 (最高+10)
-    if inp.roe > 20:
-        score += 10
-    elif inp.roe > 15:
+    # ── 机构一致性 (15 分) ──
+    # 评级 (买入/增持/中性/减持) + 覆盖家数加成
+    rating_label = inp.forecast_rating_label or ""
+    if "买入" in rating_label or "强烈推荐" in rating_label:
+        score += 12
+    elif "增持" in rating_label or "推荐" in rating_label:
         score += 7
-    elif inp.roe > 10:
+    elif "中性" in rating_label:
+        score += 0
+    elif "减持" in rating_label or "卖出" in rating_label:
+        score -= 10
+    # 覆盖家数加成 (10+ 家机构覆盖 = 数据可靠)
+    if inp.forecast_analyst_count >= 20:
         score += 3
-    elif inp.roe > 5:
+    elif inp.forecast_analyst_count >= 10:
+        score += 1
+    elif inp.forecast_analyst_count < 3 and inp.forecast_source == "institutional":
+        score -= 2  # 覆盖太少, 共识度低
+
+    # ── ROE/质量 (5 分) ──
+    if inp.roe > 20:
+        score += 5
+    elif inp.roe > 15:
+        score += 3
+    elif inp.roe > 10:
+        score += 1
+    elif inp.roe > 0:
         score += 0
     else:
-        score -= 5
+        score -= 3
 
-    # 行业展望贡献 (最高+10)
+    # ── 行业展望 (5 分) ──
     if inp.sector_outlook == 'S':
-        score += 10
+        score += 5
     elif inp.sector_outlook == 'A':
-        score += 7
-    elif inp.sector_outlook == 'B':
         score += 3
+    elif inp.sector_outlook == 'B':
+        score += 1
     elif inp.sector_outlook == 'C':
-        score -= 5
+        score -= 3
 
-    # Forward PE合理性 (最高+10)
+    # ── Forward PE 1y (5 分) ──
     if result.forward_pe_1y > 0:
-        if result.forward_pe_1y < 15:
-            score += 10
-        elif result.forward_pe_1y < 25:
+        if result.forward_pe_1y < 20:
             score += 5
-        elif result.forward_pe_1y < 40:
+        elif result.forward_pe_1y < 30:
+            score += 3
+        elif result.forward_pe_1y < 45:
             score += 0
         else:
-            score -= 5
+            score -= 3
+
+    # ── 动量/趋势 (5 分, 由外部传入) ──
+    # momentum_adjustment 范围: -10 ~ +10, 在这里截断为 ±5
+    score += max(-5, min(5, momentum_adjustment))
 
     result.composite_score = max(0, min(100, round(score)))
+    # 把动量分存到 detail 供前端展示
+    result.detail['momentum_adjustment'] = momentum_adjustment
 
     # ── 6. 评级 ──
     if result.composite_score >= 80:
@@ -652,6 +861,7 @@ def quick_valuation(code: str, industry_growth_1y: float = 0,
         'margin_of_safety': result.margin_of_safety,
         'dcf_value': result.dcf_value,
         'dcf_upside': result.dcf_upside,
+        'dcf_margin': result.dcf_margin,
         'composite_score': result.composite_score,
         'rating': result.rating,
         'summary': result.summary,
