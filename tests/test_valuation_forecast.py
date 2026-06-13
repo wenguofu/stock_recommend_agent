@@ -63,7 +63,7 @@ class TestParseYiValue:
 class TestGetInstitutionalForecast:
 
     def test_no_table_returns_none(self, fresh_quant_valuation):
-        """prediction_aggregates 表不存在 (SQLite 默认), 应返回 None 而不抛异常"""
+        """prediction_aggregates 表不存在 (MySQL 未建), 应返回 None 而不抛异常"""
         result = fresh_quant_valuation.get_institutional_forecast('999999')
         assert result is None
 

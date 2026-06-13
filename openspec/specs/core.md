@@ -8,7 +8,7 @@ Flask 应用入口，CORS 全开，集成请求日志中间件。
 |--------|----------|--------|
 | 端口 | `API_PORT` | 35000 |
 | Debug | `FLASK_DEBUG=1` | `False` |
-| 数据库 | `DATABASE_URL` | `sqlite:///database.db` |
+| 数据库 | `DATABASE_URL` | **必填 (MySQL DSN)** — 未设或非 MySQL 启动报错 |
 
 ### 路由注册
 
@@ -29,12 +29,12 @@ register_factor_routes(app)# factor_routes.py (因子+ML)
 ```python
 API_BASE = os.environ.get("A_STOCK_API", "http://127.0.0.1:35000")
 API_PORT = int(os.environ.get("API_PORT", 35000))
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///database.db")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 ```
 
 ## models.py
 
-SQLAlchemy ORM，26 张表。**支持 SQLite / MySQL 双引擎**，通过 `DATABASE_URL` 环境变量切换。
+SQLAlchemy ORM，26 张表。**仅支持 MySQL**。`DATABASE_URL` 必须为 MySQL DSN（`mysql+pymysql://...`），未设或非 MySQL 在 `get_database_url()` 阶段 fail-fast。
 
 | 表 | 用途 |
 |----|------|
@@ -57,12 +57,13 @@ SQLAlchemy ORM，26 张表。**支持 SQLite / MySQL 双引擎**，通过 `DATAB
 ### 引擎工厂
 
 ```python
-get_engine(url=None)  # 根据 DATABASE_URL 创建引擎
-reset_engine(url)     # 运行时切换数据库
+get_database_url()    # 必返回 MySQL DSN; 未设/非 MySQL raise RuntimeError
+get_engine(url=None)  # 创建 MySQL 引擎 (pool_size=10, pool_recycle=3600, pool_pre_ping=True)
+reset_engine(url)     # 运行时切换到不同 MySQL 库 (仍是 MySQL-only)
 ```
 
-- MySQL: pool_size=10, pool_recycle=3600, pool_pre_ping=True
-- SQLite: WAL 模式, check_same_thread=False, busy_timeout=15s
+- MySQL: pool_size=10, max_overflow=20, pool_recycle=3600, pool_pre_ping=True
+- 不再有 SQLite 分支
 - `.env` 文件自动加载（通过 python-dotenv）
 
 ## db.py

@@ -14,6 +14,6 @@ API_BASE = os.environ.get("A_STOCK_API", "http://127.0.0.1:35000")
 API_PORT = int(os.environ.get("API_PORT", 35000))
 
 # ── 数据库 ──
-# 默认 SQLite，切换到 MySQL 时设置环境变量:
+# 必填 (MySQL DSN); 缺值 / 非 MySQL 由 models.get_database_url() 负责 fail-fast
 #   export DATABASE_URL="mysql+pymysql://stock_user:stock_pass_2024@127.0.0.1:3306/stock_trading"
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///database.db")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")

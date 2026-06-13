@@ -4,13 +4,13 @@
 import os
 import sys
 import pytest
+from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 需要 sqlalchemy；不可用时整个模块跳过
 try:
     from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
     HAS_SQLALCHEMY = True
 except ImportError:
     HAS_SQLALCHEMY = False
@@ -19,20 +19,21 @@ pytestmark = pytest.mark.skipif(not HAS_SQLALCHEMY, reason="sqlalchemy 未安装
 
 
 @pytest.fixture
-def db_session():
-    """创建内存数据库会话"""
-    engine = create_engine("sqlite:///:memory:", echo=False)
+def db_session(mysql_test_schema, monkeypatch):
+    """MySQL 测试 schema + 替换 models.engine/SessionLocal, teardown 还原。"""
     import models
-    old_engine = models.engine
-    old_session = models.SessionLocal
-    models.engine = engine
-    models.Base.metadata.create_all(engine)
-    models.SessionLocal = sessionmaker(bind=engine)
-    session = models.SessionLocal()
-    yield session
-    session.close()
-    models.engine = old_engine
-    models.SessionLocal = old_session
+    orig_engine = models.engine
+    orig_session = models.SessionLocal
+    TestSession = sessionmaker(bind=mysql_test_schema)
+    monkeypatch.setattr(models, "engine", mysql_test_schema)
+    monkeypatch.setattr(models, "SessionLocal", TestSession)
+    session = TestSession()
+    try:
+        yield session
+    finally:
+        session.close()
+        models.engine = orig_engine
+        models.SessionLocal = orig_session
 
 
 class TestWatchlist:

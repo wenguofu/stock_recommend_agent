@@ -10,7 +10,6 @@ services:
     env_file:
       - .env
     volumes:
-      - ./database.db:/app/database.db
       - ./logs:/app/logs
       - ./eval_result:/app/eval_result
     restart: unless-stopped
