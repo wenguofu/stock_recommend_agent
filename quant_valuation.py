@@ -1188,3 +1188,48 @@ def quick_valuation(code: str, industry_growth_1y: float = 0,
             'growth_2y_implied': inp.industry_growth_2y,
         },
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# 紫苏叶产业链候选池 — 暴露给 quant_valuation 作为估值候选宇宙
+# ═══════════════════════════════════════════════════════════════
+
+def list_shiso_chokepoint_universe(chain_name: str = None, enabled_only: bool = True) -> List[Dict]:
+    """列出紫苏叶产业链卡位候选 (供 quant_valuation / 其它估值模块复用)
+
+    返回:
+        [{"code", "name", "chain_name", "layer", "monopoly_score",
+          "player_count", "extra_score", "moat_note"}, ...]
+
+    Args:
+        chain_name:   指定产业链, None = 全产业链
+        enabled_only: 是否只取 enabled=True 的卡位
+    """
+    try:
+        # 延迟导入避免循环依赖 (zisuye 自身也用 quant_valuation 工具)
+        from db import list_shiso_chokepoints
+        from models import SessionLocal
+        db = SessionLocal()
+        try:
+            rows = list_shiso_chokepoints(
+                db, chain_name=chain_name, enabled_only=enabled_only,
+            )
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"list_shiso_chokepoint_universe 失败: {e}")
+        return []
+
+    return [
+        {
+            "code": r.code,
+            "name": r.name,
+            "chain_name": r.chain_name,
+            "layer": r.layer,
+            "monopoly_score": r.monopoly_score,
+            "player_count": r.player_count,
+            "extra_score": r.extra_score,
+            "moat_note": r.moat_note,
+        }
+        for r in rows
+    ]

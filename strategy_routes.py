@@ -119,16 +119,16 @@ def register_strategy_routes(app):
         try:
             engine = importlib.import_module('strategy_engine')
             validator = importlib.import_module('strategy_validator')
-            
+
             # 1. 运行选股
             results = engine.run_all_strategies(top_n=10)
-            
+
             # 2. 保存记录
             validator.save_picks(results)
-            
+
             # 3. 运行验证
             v_results = validator.validate_all_strategy_picks()
-            
+
             return jsonify({
                 'success': True,
                 'data': {
@@ -302,5 +302,77 @@ def register_strategy_routes(app):
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500
 
-    print("[策略路由] 已注册: run / save_picks / validate / rankings / report / run_and_save / backtest")
+    @app.route('/api/strategy/zisuye/run', methods=['GET'])
+    def api_zisuye_run():
+        """紫苏叶选股
+        GET /api/strategy/zisuye/run?chain=AI光通信&top_n=20&save=false
+        """
+        chain = request.args.get('chain') or None
+        top_n = int(request.args.get('top_n', 20))
+        save = request.args.get('save', 'false').lower() in ('1', 'true', 'yes')
+
+        try:
+            zisuye = importlib.import_module('strategies.zisuye')
+            if save:
+                result = zisuye.run_and_save(chain_name=chain, top_n=top_n)
+            else:
+                result = zisuye.screen_zisuye(chain_name=chain, top_n=top_n)
+            return jsonify({'success': True, 'data': result})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/strategy/zisuye/chains', methods=['GET'])
+    def api_zisuye_chains():
+        """列出所有启用的产业链"""
+        try:
+            from db import list_shiso_chains
+            from models import SessionLocal
+            db = SessionLocal()
+            try:
+                rows = list_shiso_chains(db, enabled_only=True)
+                data = [{
+                    'chain_name': r.chain_name,
+                    'sector_tag': r.sector_tag,
+                    'toro_layer': r.toro_layer,
+                    'chokepoint_layer': r.chokepoint_layer,
+                    'top_down_path': r.top_down_path,
+                } for r in rows]
+            finally:
+                db.close()
+            return jsonify({'success': True, 'data': data})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/strategy/zisuye/picks', methods=['GET'])
+    def api_zisuye_picks():
+        """查询历史紫苏叶选股结果
+        GET /api/strategy/zisuye/picks?date=2025-12-30&limit=20
+        """
+        from db import list_shiso_picks
+        from models import SessionLocal
+        pick_date = request.args.get('date')
+        limit = int(request.args.get('limit', 50))
+        try:
+            db = SessionLocal()
+            try:
+                rows = list_shiso_picks(db, pick_date=pick_date, limit=limit)
+                data = [{
+                    'pick_date': r.pick_date,
+                    'rank': r.rank,
+                    'code': r.code,
+                    'name': r.name,
+                    'price': r.price,
+                    'total_score': r.total_score,
+                    'chain_name': r.chain_name,
+                    'layer': r.layer,
+                    'stop_loss_pct': r.stop_loss_pct,
+                    'trim_pct': r.trim_pct,
+                } for r in rows]
+            finally:
+                db.close()
+            return jsonify({'success': True, 'data': data})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    print("[策略路由] 已注册: run / save_picks / validate / rankings / report / run_and_save / backtest / zisuye")
     return app

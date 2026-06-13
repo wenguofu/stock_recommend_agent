@@ -19,22 +19,26 @@ const STRATEGY_LABELS: Record<string, string> = {
   youzi: "游资策略",
   lianghua: "量化策略",
   jichang: "基础工具",
+  zisuye: "紫苏叶",
 };
 
 const STRATEGY_BG_COLORS: Record<string, string> = {
   youzi: "#fff2f0",
   lianghua: "#e6f4ff",
   jichang: "#f6ffed",
+  zisuye: "#f9f0ff",
 };
 const STRATEGY_BORDER_COLORS: Record<string, string> = {
   youzi: "#ffccc7",
   lianghua: "#91caff",
   jichang: "#b7eb8f",
+  zisuye: "#d3adf7",
 };
 const STRATEGY_TEXT_COLORS: Record<string, string> = {
   youzi: "#cf1322",
   lianghua: "#0958d9",
   jichang: "#389e0d",
+  zisuye: "#531dab",
 };
 
 export default function Recommendations() {

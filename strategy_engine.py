@@ -44,6 +44,11 @@ STRATEGIES = {
         "desc": "基本面+技术面双重验证的稳健型机会",
         "min_score": 15,
     },
+    "zisuye": {
+        "name": "紫苏叶",
+        "desc": "产业链反推 + 行业地位/财务弹性/定价错误三因子, 严选小市值瓶颈供应商",
+        "min_score": 50,
+    },
 }
 
 
@@ -277,7 +282,12 @@ def score_by_strategy(quote: Dict, strategy: str, sector_heat: int = 0) -> float
         if price > yclose: score += 8
         if 0 < pe < 50: score += 8  # 低PE加分
         elif 50 <= pe < 100: score += 3
-    
+
+    elif strategy == "zisuye":
+        # 紫苏叶不通过逐股打分 — 候选来自产业链卡位库, 在 screen_stocks 中分派
+        # 这里直接返回 0, 由 screen_stocks 走专路生成 picks
+        score = 0
+
     return score
 
 
@@ -290,11 +300,35 @@ def screen_stocks(strategy: str, top_n: int = 10) -> List[Dict]:
     strategy_config = STRATEGIES.get(strategy)
     if not strategy_config:
         raise ValueError(f"未知策略: {strategy}")
-    
+
+    # 紫苏叶不走涨停扫描 — 走产业链卡位库, 单独分派
+    if strategy == "zisuye":
+        import importlib
+        zisuye = importlib.import_module("strategies.zisuye")
+        result_obj = zisuye.screen_zisuye(top_n=top_n)
+        # 格式化成 screen_stocks 通用 schema
+        formatted = []
+        for s in result_obj.get("stocks", []):
+            formatted.append({
+                "rank": s.get("rank"),
+                "code": s["code"],
+                "name": s.get("name", ""),
+                "price": s.get("price"),
+                "change_pct": s.get("change_pct"),
+                "turnover": s.get("turnover"),
+                "sector_heat": 0,
+                "score": s.get("total_score"),
+                "strategy": strategy,
+                "chain_name": s.get("chain_name"),
+                "layer": s.get("layer"),
+                "reason": s.get("reason"),
+            })
+        return formatted
+
     # 1. 获取板块热度
     sector_scored, hot_sectors = load_today_sectors()
     print(f"[{strategy}] 板块热度TOP5: {hot_sectors}")
-    
+
     # 2. 获取候选池
     candidates = {}  # code -> sector_name
     if sector_scored:
@@ -303,24 +337,24 @@ def screen_stocks(strategy: str, top_n: int = 10) -> List[Dict]:
                 # stock_name是中文名，需要查行情才能拿到代码
                 # 先占位，后面通过名字匹配
                 pass
-    
+
     # ===== 方案B: 从涨停板/全市场扫描 =====
     limit_up = fetch_limit_up_stocks()
     print(f"[{strategy}] 涨停/异动股: {len(limit_up)} 只")
-    
+
     all_quotes = {}
     # 先查涨停股的行情
     if limit_up:
         codes = [s["code"] for s in limit_up if s.get("code")]
         if codes:
             all_quotes.update(fetch_batch_quotes(codes))
-    
+
     # 3. 评分
     scored = []
     for code, q in all_quotes.items():
         if q["price"] <= 0:
             continue
-        
+
         # 计算该股所属板块的热度
         stock_heat = 0
         if sector_scored:
@@ -329,15 +363,15 @@ def screen_stocks(strategy: str, top_n: int = 10) -> List[Dict]:
                 if name in s["stocks_text"]:
                     stock_heat = s["heat"]
                     break
-        
+
         s = score_by_strategy(q, strategy, stock_heat)
         if s >= strategy_config["min_score"]:
             scored.append({**q, "score": round(s, 1), "sector_heat": stock_heat})
-    
+
     # 4. 排序
     scored.sort(key=lambda x: x["score"], reverse=True)
     top = scored[:top_n]
-    
+
     # 5. 格式化
     result = []
     for idx, s in enumerate(top, 1):
@@ -353,7 +387,7 @@ def screen_stocks(strategy: str, top_n: int = 10) -> List[Dict]:
             "strategy": strategy,
             "reason": _generate_reason(s, strategy),
         })
-    
+
     return result
 
 
@@ -363,24 +397,34 @@ def _generate_reason(quote: Dict, strategy: str) -> str:
     cp = quote.get("change_pct", 0)
     to = quote.get("turnover", 0)
     sh = quote.get("sector_heat", 0)
-    
+
+    if strategy == "zisuye":
+        # 紫苏叶: 链名 + 卡位层
+        cn = quote.get("chain_name", "")
+        layer = quote.get("layer", "")
+        if cn and layer:
+            parts.append(f"{cn}·{layer}")
+        elif cn:
+            parts.append(cn)
+        return "·".join(parts) if parts else "产业链卡位"
+
     if cp >= 9.5:
         parts.append(f"强势涨停+{cp:.1f}%")
     elif cp >= 5:
         parts.append(f"大涨+{cp:.1f}%")
     elif cp >= 3:
         parts.append(f"上涨+{cp:.1f}%")
-    
+
     if to >= 15:
         parts.append(f"换手极高{to:.1f}%")
     elif to >= 8:
         parts.append(f"换手活跃{to:.1f}%")
-    
+
     if sh >= 70:
         parts.append("🔥板块热点")
     elif sh >= 50:
         parts.append("📈板块较热")
-    
+
     if strategy == "sector_momentum":
         if cp > 0 and sh >= 50:
             parts.append("板块动量共振")
@@ -391,7 +435,7 @@ def _generate_reason(quote: Dict, strategy: str) -> str:
         pe = quote.get("pe", 0)
         if 0 < pe < 30:
             parts.append("低估值")
-    
+
     return "，".join(parts) if parts else "技术面关注"
 
 

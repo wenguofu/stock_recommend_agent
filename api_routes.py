@@ -2567,4 +2567,156 @@ def register_routes(app):
     from sector_routes import register_sector_routes
     register_sector_routes(app)
 
+    # ═══════════════════════════════════════════════════════════
+    # StockDetail 3 Tabs 增强 — enhance-stock-detail-tabs
+    #   - /api/fundamentals/<code>/history        (基本面 趋势)
+    #   - /api/valuation/dcf/<code>              (基本面 DCF)
+    #   - /api/sina/daily/with_benchmark/<code>  (K线 基准+形态)
+    #   - /api/sentiment/analytics/<code>        (舆情 合并)
+    # ═══════════════════════════════════════════════════════════
+    from services.dcf import dcf_valuation
+    from services.pattern_detect import detect_patterns
+    from services.text_mining import extract_keywords, sentiment_index
+    import db as _db_module
+
+    @app.route('/api/fundamentals/<code>/history')
+    def fundamentals_history(code):
+        """基本面 tab 财务趋势数据 (多期时序)"""
+        try:
+            limit = int(request.args.get('limit', 8))
+        except (TypeError, ValueError):
+            limit = 8
+        db = SessionLocal()
+        try:
+            rows = _db_module.get_stock_financials(db, code, limit=limit)
+        finally:
+            db.close()
+        return jsonify({'code': code, 'history': rows or []})
+
+    @app.route('/api/valuation/dcf/<code>')
+    def valuation_dcf(code):
+        """基本面 tab DCF 简易估值
+
+        Query (canonical short naming):
+          growth   - 5 年增速 (default 0.15)
+          discount - 折现率   (default 0.10)
+          terminal - 永续增速 (default 0.03)
+        """
+        try:
+            growth = float(request.args.get('growth', 0.15))
+            discount = float(request.args.get('discount', 0.10))
+            terminal = float(request.args.get('terminal', 0.03))
+        except (TypeError, ValueError):
+            return jsonify({'error': '参数类型错误, 需要 float'}), 400
+
+        realtime = get_realtime_data(code) or {}
+        # realtime uses 'current_price' (not 'price'/'close'); it has no 'eps' key in
+        # production, but the test fixture injects 'eps' for convenience — accept both.
+        # Real path: source EPS from latest stock_financials row; fall back to 0 (DCF
+        # will then error gracefully per spec).
+        price = realtime.get('current_price') or realtime.get('price') or realtime.get('close') or 0
+        eps = realtime.get('eps')
+        if eps is None:
+            eps = 0
+            try:
+                import db as _db_module
+                db_sess = SessionLocal()
+                try:
+                    fin_rows = _db_module.get_stock_financials(db_sess, code, limit=1) or []
+                    if fin_rows:
+                        raw_eps = fin_rows[0].get('eps') if isinstance(fin_rows[0], dict) else None
+                        if raw_eps is not None:
+                            eps = float(raw_eps)
+                finally:
+                    db_sess.close()
+            except Exception:
+                eps = 0
+
+        result = dcf_valuation(
+            eps=eps,
+            current_price=price,
+            growth=growth,
+            discount=discount,
+            terminal=terminal,
+        )
+        result['code'] = code
+        return jsonify(result)
+
+    @app.route('/api/sina/daily/with_benchmark/<code>')
+    def sina_daily_with_benchmark(code):
+        """K线图 tab 主图 + 基准叠加 + 形态标注
+
+        Query:
+          index - 基准 code (default sh000300)
+          count - 主图根数 (default 240)
+        """
+        index = request.args.get('index', 'sh000300')
+        try:
+            count = int(request.args.get('count', 240))
+        except (TypeError, ValueError):
+            count = 240
+
+        stock = get_daily_kline(code, count=count) or []
+        benchmark = get_daily_kline(index, count=count) if index else []
+
+        patterns = detect_patterns(stock) if stock else []
+
+        return jsonify({
+            'stock': stock,
+            'benchmark': benchmark,
+            'patterns': patterns,
+            'benchmark_field': index,
+            'count': len(stock),
+        })
+
+    @app.route('/api/sentiment/analytics/<code>')
+    def sentiment_analytics(code):
+        """舆情 tab 合并接口: 情绪指数 + 关键词 + 原始新闻
+
+        Query:
+          days - 日期窗口 (default 30)
+          top  - 关键词 top N (default 20)
+        """
+        try:
+            days = int(request.args.get('days', 30))
+            top = int(request.args.get('top', 20))
+        except (TypeError, ValueError):
+            days, top = 30, 20
+
+        news = get_news_from_stock(code, days=days) or []
+        # get_guba_posts signature: (code, latest_count, hot_count) — no 'days' kwarg.
+        # Heuristic: ask for days*2 latest + days*2 hot to cover the date window.
+        posts = get_guba_posts(code, latest_count=days * 2, hot_count=days * 2) or []
+
+        # news 字段契约: 新闻 + 帖子 合并, date-window 过滤后上限 100
+        # Source rows use 'time' (e.g. '2025-01-15 14:30:00'), slice first 10 chars for date.
+        combined = []
+        for n in news[:100]:
+            combined.append({
+                'date': (n.get('time') or '')[:10],
+                'title': n.get('title', ''),
+                'source': n.get('source', '新浪'),
+            })
+        for p in posts[:100]:
+            combined.append({
+                'date': (p.get('time') or '')[:10],
+                'title': p.get('title', ''),
+                'source': p.get('source', '股吧'),
+            })
+
+        # 日期窗口过滤 (now - days)
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+        combined = [c for c in combined if c['date'][:10] >= cutoff]
+
+        titles = [c['title'] for c in combined if c['title']]
+        idx = sentiment_index(combined, days=days)
+        kw = extract_keywords(titles, top=top)
+
+        return jsonify({
+            'index': idx,
+            'keywords': kw,
+            'news': combined,
+        })
+
     return app

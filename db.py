@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """数据库操作函数"""
 
-from models import SessionLocal, Watchlist, Config, Agent, AnalysisCache, DebateJob, Strategy, PaperAccount, PaperPosition, PaperOrder, PaperSnapshot, PaperPlan, EtfReplacementMap, PaperAutoRule, Recommendation
+from models import SessionLocal, Watchlist, Config, Agent, AnalysisCache, DebateJob, Strategy, PaperAccount, PaperPosition, PaperOrder, PaperSnapshot, PaperPlan, EtfReplacementMap, PaperAutoRule, Recommendation, ShisoChain, ShisoChokepoint, ShisoPick
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import json
@@ -1011,3 +1011,171 @@ def clear_backtest_data(db: Session, code: str = None):
         db.query(BacktestStockMeta).delete()
     db.commit()
 
+
+
+# ═══════════════════════════════════════════════════════════════
+# 紫苏叶理论 — 产业链 & 卡位  CRUD
+# ═══════════════════════════════════════════════════════════════
+
+def list_shiso_chains(db: Session, enabled_only: bool = True) -> list:
+    """列出所有产业链"""
+    q = db.query(ShisoChain)
+    if enabled_only:
+        q = q.filter(ShisoChain.enabled == True)
+    return q.order_by(ShisoChain.chain_name).all()
+
+
+def get_shiso_chain(db: Session, chain_name: str):
+    """按名称取产业链"""
+    return db.query(ShisoChain).filter(ShisoChain.chain_name == chain_name).first()
+
+
+def upsert_shiso_chain(db: Session, chain_name: str, **kwargs) -> ShisoChain:
+    """插入或更新产业链"""
+    row = db.query(ShisoChain).filter(ShisoChain.chain_name == chain_name).first()
+    if row:
+        for k, v in kwargs.items():
+            if hasattr(row, k):
+                setattr(row, k, v)
+        row.updated_at = datetime.now()
+    else:
+        row = ShisoChain(chain_name=chain_name, **kwargs)
+        db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def list_shiso_chokepoints(db: Session, chain_name: str = None,
+                           enabled_only: bool = True,
+                           require_verified: bool = False,
+                           customer: str = None) -> list:
+    """列出卡位标的
+
+    enabled_only=True 时:
+      - 卡位本身的 enabled=True
+      - 所属 chain 的 enabled=True
+    任一条件不满足, 卡位都被排除
+
+    require_verified=True:
+      - 仅返回 supply_chain_verified=True 的卡位 (供应链环节已验证, 非行业映射)
+
+    customer:
+      - 仅返回所属 chain.customer 匹配的卡位
+    """
+    q = db.query(ShisoChokepoint)
+    if chain_name:
+        q = q.filter(ShisoChokepoint.chain_name == chain_name)
+    if enabled_only:
+        q = q.filter(ShisoChokepoint.enabled == True)
+        # 关联 ShisoChain, 过滤掉整链被禁用的卡位
+        q = q.join(
+            ShisoChain,
+            ShisoChokepoint.chain_name == ShisoChain.chain_name,
+        ).filter(ShisoChain.enabled == True)
+    if require_verified:
+        q = q.filter(ShisoChokepoint.supply_chain_verified == True)
+    if customer:
+        # 需要 join ShisoChain (如果还没 join)
+        # SQLAlchemy 对同一表的多次 join 需要 alias, 这里用简单方式:
+        # 如果前面已经 join 过用于 enabled_only, 直接加 filter; 否则单独 join
+        try:
+            q = q.filter(ShisoChain.customer == customer)
+        except Exception:
+            q = q.join(
+                ShisoChain,
+                ShisoChokepoint.chain_name == ShisoChain.chain_name,
+            ).filter(ShisoChain.customer == customer)
+    return q.order_by(ShisoChokepoint.code).all()
+
+
+def get_shiso_chokepoint(db: Session, code: str, chain_name: str = None):
+    """按 code(+chain) 取卡位标的"""
+    q = db.query(ShisoChokepoint).filter(ShisoChokepoint.code == code)
+    if chain_name:
+        q = q.filter(ShisoChokepoint.chain_name == chain_name)
+    return q.first()
+
+
+def upsert_shiso_chokepoint(db: Session, code: str, chain_name: str, **kwargs) -> ShisoChokepoint:
+    """插入或更新卡位标的"""
+    row = db.query(ShisoChokepoint).filter(
+        ShisoChokepoint.code == code,
+        ShisoChokepoint.chain_name == chain_name,
+    ).first()
+    if row:
+        for k, v in kwargs.items():
+            if hasattr(row, k):
+                setattr(row, k, v)
+        row.updated_at = datetime.now()
+    else:
+        row = ShisoChokepoint(code=code, chain_name=chain_name, **kwargs)
+        db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def delete_shiso_chokepoint(db: Session, code: str, chain_name: str) -> bool:
+    """删除卡位标的"""
+    row = db.query(ShisoChokepoint).filter(
+        ShisoChokepoint.code == code,
+        ShisoChokepoint.chain_name == chain_name,
+    ).first()
+    if row:
+        db.delete(row)
+        db.commit()
+        return True
+    return False
+
+
+def save_shiso_picks(db: Session, pick_date: str, picks: list) -> list:
+    """批量保存紫苏叶选股结果(同日期覆盖)"""
+    try:
+        # 单事务: 删除当日旧记录 + 插入新记录, 失败回滚到调用方一致状态
+        db.query(ShisoPick).filter(ShisoPick.pick_date == pick_date).delete()
+        db.flush()
+
+        ids = []
+        for p in picks:
+            rec = ShisoPick(
+                pick_date=pick_date,
+                rank=p.get('rank'),
+                code=p['code'],
+                name=p.get('name'),
+                price=p.get('price'),
+                change_pct=p.get('change_pct'),
+                turnover=p.get('turnover'),
+                amount=p.get('amount'),
+                market_cap=p.get('market_cap'),
+                chain_name=p.get('chain_name'),
+                layer=p.get('layer'),
+                industry_score=p.get('industry_score'),
+                elasticity_score=p.get('elasticity_score'),
+                mispricing_score=p.get('mispricing_score'),
+                extra_score=p.get('extra_score'),
+                total_score=p.get('total_score'),
+                stop_loss_pct=p.get('stop_loss_pct', -5.0),
+                trim_pct=p.get('trim_pct', 50.0),
+                trim_size=p.get('trim_size', round(1.0/3, 4)),
+                reason=p.get('reason'),
+            )
+            db.add(rec)
+            db.flush()
+            ids.append(rec.id)
+        db.commit()
+        return ids
+    except Exception:
+        db.rollback()
+        raise
+
+
+def list_shiso_picks(db: Session, pick_date: str = None, limit: int = 50,
+                     chain_name: str = None) -> list:
+    """列选股结果"""
+    q = db.query(ShisoPick)
+    if pick_date:
+        q = q.filter(ShisoPick.pick_date == pick_date)
+    if chain_name:
+        q = q.filter(ShisoPick.chain_name == chain_name)
+    return q.order_by(ShisoPick.pick_date.desc(), ShisoPick.rank.asc()).limit(limit).all()

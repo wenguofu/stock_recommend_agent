@@ -85,7 +85,7 @@ def fetch_stock_data(code: str, name: str, days: int = 365) -> List[Dict]:
         now.weekday() < 5 and (
             (now.hour == 9 and now.minute >= 30) or
             10 <= now.hour <= 11 or
-            13 <= now.hour <= 14
+            13 <= now.hour <= 15
         )
     )
     
@@ -168,29 +168,112 @@ def _df_to_records(df: pd.DataFrame, days: int) -> List[Dict]:
 
 
 def _sina_to_records(data: List[Dict], days: int) -> List[Dict]:
-    """将Sina JSON转为记录列表（计算涨跌幅）"""
+    """将Sina JSON转为记录列表（计算涨跌幅 + 推算 amount）
+
+    Sina K-line 接口字段: {day, open, high, low, close, volume}
+    - volume 单位是「股」(不是手), amount = close × volume
+    - turnover 字段 Sina K-line 不返回, 留 0 标记待 enrich_with_tencent_snapshot 回填
+    """
     closes = [float(d.get("close", 0)) for d in data]
     records = []
     for i, d in enumerate(data):
         cp = 0.0
         if i > 0 and closes[i - 1] > 0:
             cp = (closes[i] - closes[i - 1]) / closes[i - 1] * 100
+        close = closes[i]
+        volume = float(d.get("volume", 0))
+        # amount 推算: close × volume (volume 单位是股)
+        amount = close * volume if close > 0 and volume > 0 else 0.0
         records.append({
             "code": "",
             "date": d.get("day", "")[:10],
             "open": float(d.get("open", 0)),
-            "close": closes[i],
+            "close": close,
             "high": float(d.get("high", 0)),
             "low": float(d.get("low", 0)),
-            "volume": float(d.get("volume", 0)),
-            "amount": 0,
+            "volume": volume,
+            "amount": amount,
             "change_pct": round(cp, 2),
-            "turnover": 0,
-            "source": "sina",
+            "turnover": 0,  # Sina K-line 无换手率, 由腾讯快照二次回填
+            "source": "sina-amount-estimated",
         })
     if len(records) > days:
         records = records[-days:]
     return records
+
+
+def _fetch_tencent_snapshot(code: str) -> Optional[Dict]:
+    """从腾讯 qt.gtimg.cn 拉取单只股票当日快照
+
+    返回: {amount_wan(万元), turnover_pct(%), market_cap_yi(亿), circulate_cap_yi(亿)} 或 None
+    失败返回 None, 不抛异常.
+    """
+    sina_code = f'sh{code}' if code.startswith(('5', '6', '9')) else f'sz{code}'
+    url = f'https://qt.gtimg.cn/q={sina_code}'
+    try:
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read().decode('gbk', errors='ignore')
+    except Exception as e:
+        log.debug(f"  腾讯快照 {code} 失败: {e}")
+        return None
+    try:
+        body = raw.split('="', 1)[1].rstrip('";\n')
+        parts = body.split('~')
+        if len(parts) < 50:
+            return None
+        return {
+            'amount_wan': float(parts[37]),
+            'turnover_pct': float(parts[38]),
+            'market_cap_yi': float(parts[45]),
+            'circulate_cap_yi': float(parts[44]),
+        }
+    except (ValueError, IndexError) as e:
+        log.debug(f"  腾讯快照 {code} 解析失败: {e}")
+        return None
+
+
+def enrich_with_tencent_snapshot(codes: List[str], sleep_sec: float = 0.5) -> int:
+    """用腾讯快照二次回填 backtest_data 中 Sina 估算行的 turnover 与 amount
+
+    限流: 单次调用间隔 sleep_sec 秒 (默认 0.5s, 50只/批).
+    失败: 单只 code 拉取失败不影响其它 code, 不抛异常.
+
+    Returns: 成功回填的行数.
+    """
+    from models import SessionLocal
+    from sqlalchemy import text
+
+    db = SessionLocal()
+    updated = 0
+    try:
+        for code in codes:
+            snap = _fetch_tencent_snapshot(code)
+            if not snap:
+                continue
+            # 找该 code 最新一天 (replace-mode 保证唯一)
+            row = db.execute(text(
+                'SELECT date FROM backtest_data WHERE code=:c ORDER BY date DESC LIMIT 1'
+            ), {'c': code}).fetchone()
+            if not row:
+                continue
+            latest_date = row[0]
+            amount_yuan = snap['amount_wan'] * 1e4
+            db.execute(text(
+                'UPDATE backtest_data SET amount=:a, turnover=:t '
+                'WHERE code=:c AND date=:d'
+            ), {'a': amount_yuan, 't': snap['turnover_pct'], 'c': code, 'd': latest_date})
+            updated += 1
+            time.sleep(sleep_sec)
+        db.commit()
+    except Exception as e:
+        log.warning(f"  enrich_with_tencent_snapshot 异常: {e}")
+        db.rollback()
+    finally:
+        db.close()
+    return updated
 
 
 # ═══════════════════════════════════════════════
@@ -362,14 +445,22 @@ def batch_run(stocks: List[Dict], days: int = 365, max_workers: int = 8,
     elapsed = time.time() - t_start
     log.info(f"✅ 批量完成: {ok_count} 成功 / {fail_count} 失败 / {total} 总计")
     log.info(f"   耗时: {elapsed:.0f}秒 ({elapsed/60:.1f}分钟)")
-    
+
+    # 腾讯快照二次回填 turnover + 校验 amount (Sina 估算行)
+    try:
+        all_codes = [s['code'] for s in stocks]
+        enriched = enrich_with_tencent_snapshot(all_codes)
+        log.info(f"   腾讯快照二次回填: {enriched}/{len(all_codes)} 只")
+    except Exception as e:
+        log.warning(f"   腾讯快照回填异常: {e}")
+
     save_progress({
         "completed": list(get_db_completed()),
         "failed": [],
         "started_at": datetime.now().isoformat(),
         "total": total,
     })
-    
+
     return {"ok": ok_count, "failed": fail_count, "total": total}
 
 

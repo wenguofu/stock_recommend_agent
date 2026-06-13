@@ -9,11 +9,20 @@ interface CandlestickChartProps {
   buyZones?: Array<{ price: number; label: string }>;
   sellZones?: Array<{ price: number; label: string }>;
   indicatorsData?: any; // 包含MA等指标的数据
+  /** 基准指数 K 线 (副图叠加, 百分比归一化) */
+  benchmarkData?: Array<{ date: string; close: number }>;
+  /** 基准名称, 用于副图 legend */
+  benchmarkLabel?: string;
+  /** 形态标注 (主图 markPoint) */
+  patterns?: Array<{ date: string; type: string; direction?: string; note?: string }>;
 }
 
 type KlineType = 'daily' | 'minute1' | 'minute5' | 'minute30';
 
-export default function CandlestickChart({ code, buyZones, sellZones, indicatorsData }: CandlestickChartProps) {
+export default function CandlestickChart({
+  code, buyZones, sellZones, indicatorsData,
+  benchmarkData, benchmarkLabel, patterns,
+}: CandlestickChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -672,6 +681,86 @@ export default function CandlestickChart({ code, buyZones, sellZones, indicators
       </div>
       {/* 图表容器 */}
       <div ref={chartContainerRef} className="w-full h-full" />
+
+      {/* 形态标注 overlay — 在主图右上角小卡片汇总 */}
+      {patterns && patterns.length > 0 && (
+        <div className="absolute top-3 left-3 z-20 bg-white/90 dark:bg-gray-800/90 rounded-lg shadow p-2 max-w-[240px]">
+          <div className="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1">
+            形态标注 ({patterns.length})
+          </div>
+          <div className="flex flex-col gap-0.5 max-h-[180px] overflow-y-auto">
+            {patterns.slice(0, 12).map((p, i) => {
+              const colorMap: Record<string, string> = {
+                gap_up: '#cf1322',
+                gap_down: '#389e0d',
+                doji: '#faad14',
+                upper_shadow: '#722ed1',
+                lower_shadow: '#13c2c2',
+              };
+              const labelMap: Record<string, string> = {
+                gap_up: '跳空↑',
+                gap_down: '跳空↓',
+                doji: '十字',
+                upper_shadow: '长上影',
+                lower_shadow: '长下影',
+              };
+              return (
+                <div key={i} className="flex items-center gap-1 text-[11px]">
+                  <span
+                    className="inline-block w-2 h-2 rounded-full"
+                    style={{ background: colorMap[p.type] || '#999' }}
+                  />
+                  <span className="text-gray-600 dark:text-gray-300 font-mono">
+                    {String(p.date).slice(5)}
+                  </span>
+                  <span className="text-gray-800 dark:text-gray-100">
+                    {labelMap[p.type] || p.type}
+                  </span>
+                  {p.note && (
+                    <span className="text-gray-500 dark:text-gray-400 truncate" title={p.note}>
+                      {p.note}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+            {patterns.length > 12 && (
+              <div className="text-[10px] text-gray-400 mt-1">+{patterns.length - 12} 更多...</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 基准叠加副图 — 高度 80px, 百分比归一化 */}
+      {benchmarkData && benchmarkData.length > 0 && (() => {
+        const sorted = [...benchmarkData].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+        const base = sorted[0]?.close || 1;
+        const W = 600, H = 80, PAD_L = 40, PAD_R = 8, PAD_T = 4, PAD_B = 12;
+        const xStep = (W - PAD_L - PAD_R) / Math.max(1, sorted.length - 1);
+        const xOf = (i: number) => PAD_L + i * xStep;
+        const pcts = sorted.map((p) => ((p.close - base) / base) * 100);
+        const minP = Math.min(0, ...pcts);
+        const maxP = Math.max(0, ...pcts);
+        const range = Math.max(maxP - minP, 0.1);
+        const yOf = (v: number) => PAD_T + (maxP - v) / range * (H - PAD_T - PAD_B);
+        const yZero = yOf(0);
+        const path = sorted.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xOf(i).toFixed(1)} ${yOf(pcts[i]).toFixed(1)}`).join(' ');
+        return (
+          <div className="absolute bottom-2 left-2 right-2 z-10 bg-white/85 dark:bg-gray-800/85 rounded-lg shadow p-2">
+            <div className="text-[11px] text-gray-600 dark:text-gray-300 mb-1 flex justify-between">
+              <span>基准叠加 ({benchmarkLabel || '基准'} · 起点 0%)</span>
+              <span className="font-mono">
+                终点 {pcts[pcts.length - 1] >= 0 ? '+' : ''}{pcts[pcts.length - 1].toFixed(2)}%
+              </span>
+            </div>
+            <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+              <line x1={PAD_L} y1={yZero} x2={W - PAD_R} y2={yZero} stroke="#999" strokeDasharray="2 2" />
+              <path d={path} fill="none" stroke="#1677ff" strokeWidth={1.2} />
+              <text x={4} y={yZero + 3} fontSize={9} fill="#666">0%</text>
+            </svg>
+          </div>
+        );
+      })()}
     </div>
   );
 }

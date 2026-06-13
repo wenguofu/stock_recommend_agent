@@ -37,6 +37,17 @@ interface Config {
     min_score: number;
     min_sector_strength: number;
   };
+  zisuye: {
+    min_score: number;
+    max_market_cap_yi: number;
+    min_amount_wan: number;
+    stop_loss_pct: number;
+    trim_pct: number;
+    trim_size: number;
+    w_industry: number;
+    w_elasticity: number;
+    w_mispricing: number;
+  };
   // 风控
   risk: {
     max_position_pct: number;
@@ -70,6 +81,17 @@ const DEFAULT_CONFIG: Config = {
   youzi: { min_score: 25, min_turnover: 5, min_momentum: 0.03 },
   lianghua: { min_score: 20, macd_fast: 12, macd_slow: 26 },
   sector_momentum: { min_score: 30, min_sector_strength: 0.6 },
+  zisuye: {
+    min_score: 50,
+    max_market_cap_yi: 200,
+    min_amount_wan: 5000,
+    stop_loss_pct: 5,
+    trim_pct: 50,
+    trim_size: 0.333,
+    w_industry: 0.4,
+    w_elasticity: 0.3,
+    w_mispricing: 0.3,
+  },
   risk: {
     max_position_pct: 80,
     max_single_stock_pct: 25,
@@ -254,6 +276,99 @@ export default function StrategyConfig() {
                     </Form.Item>
                   </Col>
                 </Row>
+              </Card>
+
+              <Card title="紫苏叶 (zisuye) — 五问漏斗" style={{ marginTop: 12 }}>
+                <Row gutter={16}>
+                  <Col span={6}>
+                    <Form.Item label="最低分(50)">
+                      <InputNumber
+                        min={0} max={100}
+                        value={config.zisuye.min_score}
+                        onChange={v => updateSection('zisuye', { ...config.zisuye, min_score: v || 50 })}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col span={6}>
+                    <Form.Item label="市值上限(亿)">
+                      <InputNumber
+                        min={20} max={1000}
+                        value={config.zisuye.max_market_cap_yi}
+                        onChange={v => updateSection('zisuye', { ...config.zisuye, max_market_cap_yi: v || 200 })}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col span={6}>
+                    <Form.Item label="最低成交额(万)">
+                      <InputNumber
+                        min={500} max={50000} step={500}
+                        value={config.zisuye.min_amount_wan}
+                        onChange={v => updateSection('zisuye', { ...config.zisuye, min_amount_wan: v || 5000 })}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col span={6}>
+                    <Form.Item label="止损(%)">
+                      <InputNumber
+                        min={1} max={20}
+                        value={config.zisuye.stop_loss_pct}
+                        onChange={v => updateSection('zisuye', { ...config.zisuye, stop_loss_pct: v || 5 })}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col span={6}>
+                    <Form.Item label="触发减仓涨幅(%)">
+                      <InputNumber
+                        min={10} max={200}
+                        value={config.zisuye.trim_pct}
+                        onChange={v => updateSection('zisuye', { ...config.zisuye, trim_pct: v || 50 })}
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col span={6}>
+                    <Form.Item label="减仓比例">
+                      <InputNumber
+                        min={0.1} max={0.9} step={0.05}
+                        value={config.zisuye.trim_size}
+                        onChange={v => updateSection('zisuye', { ...config.zisuye, trim_size: v || 1 / 3 })}
+                      />
+                      <Text type="secondary">{config.zisuye.trim_size.toFixed(2)}</Text>
+                    </Form.Item>
+                  </Col>
+                  <Col span={6}>
+                    <Form.Item label="行业地位权重">
+                      <InputNumber
+                        min={0} max={1} step={0.05}
+                        value={config.zisuye.w_industry}
+                        onChange={v => updateSection('zisuye', { ...config.zisuye, w_industry: v ?? 0.4 })}
+                      />
+                      <Text type="secondary">{config.zisuye.w_industry.toFixed(2)}</Text>
+                    </Form.Item>
+                  </Col>
+                  <Col span={6}>
+                    <Form.Item label="财务弹性权重">
+                      <InputNumber
+                        min={0} max={1} step={0.05}
+                        value={config.zisuye.w_elasticity}
+                        onChange={v => updateSection('zisuye', { ...config.zisuye, w_elasticity: v ?? 0.3 })}
+                      />
+                      <Text type="secondary">{config.zisuye.w_elasticity.toFixed(2)}</Text>
+                    </Form.Item>
+                  </Col>
+                  <Col span={6}>
+                    <Form.Item label="定价错误权重">
+                      <InputNumber
+                        min={0} max={1} step={0.05}
+                        value={config.zisuye.w_mispricing}
+                        onChange={v => updateSection('zisuye', { ...config.zisuye, w_mispricing: v ?? 0.3 })}
+                      />
+                      <Text type="secondary">{config.zisuye.w_mispricing.toFixed(2)}</Text>
+                    </Form.Item>
+                  </Col>
+                </Row>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  五问漏斗: 物理瓶颈→唯一性→商业化→财务弹性→定价错误。三步方法论: 倒推+数玩家(≥3过/2看/1核心)+公开验证+自对抗。
+                </Text>
               </Card>
             </>
           ),

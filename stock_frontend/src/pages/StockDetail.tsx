@@ -13,6 +13,10 @@ import StockHeader from '../components/StockHeader';
 import StockAnalysis from '../components/StockAnalysis';
 import StockDebate from '../components/StockDebate';
 import ValuationPanel from '../components/ValuationPanel';
+import FundamentalTrendChart from '../components/charts/FundamentalTrendChart';
+import DCFValuation from '../components/DCFValuation';
+import SentimentIndexChart from '../components/SentimentIndexChart';
+import KeywordCloud from '../components/KeywordCloud';
 
 const { Text } = Typography;
 
@@ -144,6 +148,19 @@ export default function StockDetail() {
     retry: 1,
   });
 
+  // K线 叠加基准 + 形态标注 (Sprint enhance-stock-detail-tabs)
+  const { data: withBenchmarkData } = useQuery({
+    queryKey: ['sina-daily-with-benchmark', codeStr],
+    queryFn: async () => {
+      const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:35000';
+      const response = await fetch(`${apiUrl}/api/sina/daily/with_benchmark/${codeStr}?index=sh000300&count=240`);
+      if (!response.ok) throw new Error('Failed to fetch with_benchmark');
+      return response.json();
+    },
+    enabled: !!codeStr,
+    retry: 1,
+  });
+
   const displayData = comprehensiveData?.realtime || realtimeData;
   const isUp = (displayData?.change_percent ?? 0) >= 0;
   const upColor = '#cf1322';
@@ -228,6 +245,9 @@ export default function StockDetail() {
               (comprehensiveData as any)?.daily ||
               null
             }
+            benchmarkData={withBenchmarkData?.benchmark}
+            benchmarkLabel={withBenchmarkData?.benchmark_field || 'sh000300'}
+            patterns={withBenchmarkData?.patterns}
           />
         </Spin>
       ),
@@ -330,7 +350,9 @@ export default function StockDetail() {
     {
       key: 'fundamental',
       label: '基本面',
-      children: fundamentalLoading ? (
+      children: (
+        <>
+        {fundamentalLoading ? (
         <Spin />
       ) : fundamentalData || comprehensiveData?.fundamental ? (
         <Card title="基本面数据">
@@ -495,6 +517,12 @@ export default function StockDetail() {
         </Card>
       ) : (
         <Alert type="info" message="暂无基本面数据" showIcon />
+      )}
+
+      {/* Sprint enhance-stock-detail-tabs: 财务趋势 + DCF (always render, independent of analyst data) */}
+      <FundamentalTrendChart code={codeStr} />
+      <DCFValuation code={codeStr} />
+        </>
       ),
     },
     {
@@ -504,6 +532,10 @@ export default function StockDetail() {
         <Spin />
       ) : sentimentData ? (
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          {/* Sprint enhance-stock-detail-tabs: 情绪曲线 + 关键词云 */}
+          <SentimentIndexChart code={codeStr} />
+          <KeywordCloud code={codeStr} />
+
           {sentimentData.news?.list && sentimentData.news.list.length > 0 && (
             <Card title="相关新闻">
               {sentimentData.news.list.slice(0, 10).map((news: any, index: number) => (

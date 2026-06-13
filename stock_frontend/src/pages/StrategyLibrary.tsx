@@ -33,18 +33,21 @@ const CATEGORIES = [
   { value: 'youzi', label: '游资策略', icon: '🐉' },
   { value: 'jichang', label: '基础工具', icon: '🔧' },
   { value: 'lianghua', label: '量化策略', icon: '📊' },
+  { value: 'zisuye', label: '紫苏叶', icon: '🍃' },
 ];
 
 const CATEGORY_LABELS: Record<string, string> = {
   youzi: '游资策略',
   jichang: '基础工具',
   lianghua: '量化策略',
+  zisuye: '紫苏叶',
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
   youzi: 'red',
   jichang: 'blue',
   lianghua: 'green',
+  zisuye: 'purple',
 };
 
 export default function StrategyLibrary() {
