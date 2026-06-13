@@ -37,34 +37,41 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
+from sqlalchemy import select
+from models import SessionLocal, BacktestData
+
 
 # ── 数据准备 (共用) ──
 
 def load_training_data(time_window: str = "2y") -> pd.DataFrame:
     """
     加载训练数据 (K线 + 标签 = 未来 5 日收益)
-    简化版: 用本地缓存; 实际项目从 ClickHouse/MySQL 取
+    从 MySQL backtest_data 表读取 (历史缓存, 加速训练)
     """
     days = {"1y": 365, "2y": 730, "3y": 1095}.get(time_window, 730)
-    logger.info(f"Loading training data, window={time_window} ({days} days)")
+    logger.info(f"Loading training data from MySQL backtest_data, window={time_window} ({days} days)")
 
-    # 简化: 从 backtest_data 表 (SQLite fallback)
     try:
-        import sqlite3
-        db_path = os.path.join(PROJECT_ROOT, "database.db")
-        if os.path.exists(db_path):
-            conn = sqlite3.connect(db_path)
-            cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-            df = pd.read_sql(f"""
-                SELECT code, date, open, high, low, close, volume
-                FROM backtest_data
-                WHERE date >= '{cutoff}'
-                ORDER BY code, date
-            """, conn)
-            conn.close()
-            if len(df) > 0:
-                logger.info(f"Loaded {len(df)} rows from backtest_data")
-                return df
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        session = SessionLocal()
+        try:
+            stmt = (
+                select(
+                    BacktestData.code, BacktestData.date,
+                    BacktestData.open, BacktestData.high, BacktestData.low,
+                    BacktestData.close, BacktestData.volume,
+                )
+                .where(BacktestData.date >= cutoff)
+                .order_by(BacktestData.code, BacktestData.date)
+            )
+            # SQLAlchemy 2.0: session.get_bind() 返回 engine (session.bind 已 deprecated)
+            df = pd.read_sql(stmt, session.get_bind())
+        finally:
+            session.close()
+
+        if len(df) > 0:
+            logger.info(f"Loaded {len(df)} rows from backtest_data")
+            return df
     except Exception as e:
         logger.warning(f"Failed to load from backtest_data: {e}")
 

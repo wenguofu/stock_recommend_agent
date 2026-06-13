@@ -50,7 +50,7 @@ pip install -r requirements.txt
 # 配置环境变量
 cp .env.example .env
 # 编辑 .env 填入 AI 密钥（优先级高于 DB 存储）
-# DATABASE_URL 默认指向 MySQL，如需切回 SQLite 注释掉即可
+# DATABASE_URL 必填 (MySQL DSN)，未设或非 MySQL 启动直接报错
 
 # 启动
 python3 api_server.py &          # 后端 → http://localhost:35000
@@ -61,7 +61,7 @@ cd stock_frontend && npm install && npm run dev  # 前端 → http://localhost:5
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `DATABASE_URL` | `mysql+pymysql://stock_user:.../stock_trading` | 数据库连接，支持 SQLite/MySQL |
+| `DATABASE_URL` | `mysql+pymysql://stock_user:.../stock_trading` | **必填** (MySQL DSN)，未设启动报错 |
 | `API_PORT` | 35000 | API 服务端口 |
 | `AUTH_ENABLED` | 0 | 是否启用 API 认证 |
 | `OPENAI_API_KEY` | — | OpenAI API Key |
@@ -78,7 +78,7 @@ a-stock-trading/
 ├── midline_routes.py      # 中长线交易 API
 ├── ai_service.py          # AI 服务调用
 ├── config.py              # 共享配置 (API_BASE, DATABASE_URL)
-├── models.py              # ORM 模型 (26表, 支持 SQLite/MySQL)
+├── models.py              # ORM 模型 (26表, MySQL)
 ├── db.py                  # CRUD 操作层
 ├── scheduler.py           # 内置任务调度器
 ├── data_fetchers.py       # 数据获取层 (基本面上MySQL优先)
@@ -90,7 +90,6 @@ a-stock-trading/
 ├── retry.py               # 外部 API 重试装饰器
 ├── ai_config.py           # AI 密钥管理 (env→DB)
 ├── logging_config.py      # JSON 结构化日志
-├── migrate_to_mysql.py    # SQLite→MySQL 迁移脚本
 ├── fill_missing_data.py   # 日K数据补全 (东方财富 HTTP)
 ├── pull_watchlist_financials.py  # 自选股财报补全
 ├── stock_frontend/        # React + Vite 前端

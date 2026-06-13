@@ -9,7 +9,7 @@
 **文件：** `models.py`
 **操作：** 新增 PaperAccount, PaperPosition, PaperOrder, PaperSnapshot, EtfReplacementMap
 
-**迁移：** 重启后端自动重建表（SQLite + Base.metadata.create_all）
+**迁移：** 重启后端自动重建表（MySQL DDL via Base.metadata.create_all）
 
 ## Task 2: 核心交易逻辑 paper_trading.py
 

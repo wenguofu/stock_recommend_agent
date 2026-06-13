@@ -18,7 +18,7 @@ Sprint5: 端到端集成测试
   10. Sprint5 缓存: stats → clear
 
 依赖: pytest, Flask 测试客户端
-注意: 这些测试需要 MySQL/SQLite 数据库连接; 使用独立的测试 schema
+注意: 这些测试需要 MySQL 数据库连接; 使用独立的测试 schema (TEST_DATABASE_URL)
 """
 import json
 import os

@@ -9,7 +9,6 @@ from sqlalchemy import create_engine, Column, Integer, String, Boolean, Text, Da
 from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import event
 from datetime import datetime
 import os
 
@@ -24,66 +23,43 @@ except ImportError:
 Base = declarative_base()
 
 # ═══════════════════════════════════════════════════════════════
-# 数据库引擎工厂 — 通过 DATABASE_URL 环境变量切换 SQLite / MySQL
+# 数据库引擎工厂 — 仅支持 MySQL
 # ═══════════════════════════════════════════════════════════════
 
 def get_database_url():
-    """获取数据库连接 URL，优先从环境变量读取"""
-    env_url = os.environ.get("DATABASE_URL", "")
-    if env_url:
-        return env_url
-    # 默认 SQLite（向后兼容）
-    db_path = os.path.join(os.path.dirname(__file__), 'database.db')
-    return f'sqlite:///{db_path}'
+    """获取 MySQL DSN，未设置或非 MySQL 时 fail-fast (RuntimeError)。"""
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL 未设置。本项目仅支持 MySQL，请设置环境变量，例如:\n"
+            "  export DATABASE_URL='mysql+pymysql://user:pass@127.0.0.1:3306/stock_trading'"
+        )
+    if not url.startswith("mysql"):
+        raise RuntimeError(
+            f"DATABASE_URL 必须是 MySQL DSN (以 mysql:// 开头)，当前: {url[:40]}..."
+        )
+    return url
 
 
 def get_engine(database_url=None):
-    """创建 SQLAlchemy 引擎
+    """创建 MySQL 引擎 (本项目唯一支持的 DB 引擎)。
 
     Args:
-        database_url: 数据库连接 URL，为 None 时自动从环境变量/默认值获取
+        database_url: MySQL DSN，为 None 时从环境变量读取
 
     Returns:
         sqlalchemy.engine.Engine
     """
-    url = database_url or get_database_url()
-    is_mysql = url.startswith("mysql")
+    url = database_url or get_database_url()  # 内部已校验 MySQL
 
-    if is_mysql:
-        engine = create_engine(
-            url,
-            echo=False,
-            pool_size=10,
-            max_overflow=20,
-            pool_pre_ping=True,
-            pool_recycle=3600,  # MySQL 默认 8h wait_timeout，一小时回收避免断开
-        )
-    else:
-        # SQLite 配置（向后兼容）
-        engine = create_engine(
-            url,
-            echo=False,
-            connect_args={
-                'check_same_thread': False,
-                'timeout': 15,
-            },
-            pool_size=5,
-            max_overflow=10,
-            pool_pre_ping=True,
-            pool_recycle=300,
-        )
-
-        # 启用 WAL 模式 — 支持并发读写
-        @event.listens_for(engine, 'connect')
-        def _set_sqlite_pragma(dbapi_connection, connection_record):
-            cursor = dbapi_connection.cursor()
-            cursor.execute('PRAGMA journal_mode=WAL')
-            cursor.execute('PRAGMA synchronous=NORMAL')
-            cursor.execute('PRAGMA busy_timeout=15000')
-            cursor.execute('PRAGMA foreign_keys=ON')
-            cursor.close()
-
-    return engine
+    return create_engine(
+        url,
+        echo=False,
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True,
+        pool_recycle=3600,  # MySQL 默认 8h wait_timeout，一小时回收避免断开
+    )
 
 
 # 全局引擎和会话工厂
@@ -537,6 +513,88 @@ class ModelVersion(Base):
     promoted_at = Column(DateTime)
     notes = Column(Text)
 
+
+
+# ═══════════════════════════════════════════════════════════════
+# 紫苏叶理论 (Shiso Leaf Theory) — 产业链 + 瓶颈点
+# ═══════════════════════════════════════════════════════════════
+
+class ShisoChain(Base):
+    """产业链定义表 — 自上而下的反推路径 (Toro → Chokepoint)
+
+    紫苏叶理论核心：从最终需求逐层反推物理瓶颈。
+    每条 chain 是一条"金枪鱼→紫苏叶"的产业链路径。
+    """
+    __tablename__ = 'shiso_chains'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    chain_name = Column(String(50), nullable=False, unique=True, index=True)  # 'AI光通信'
+    sector_tag = Column(String(50))  # 板块归类, 如 '通信'
+    customer = Column(String(100))  # 终端客户, 如 'SpaceX' / 'NVIDIA' / 'Apple'. 区分供应链映射vs行业主题
+    toro_layer = Column(String(200))  # 金枪鱼层描述, 如 'GPU/光模块'
+    chokepoint_layer = Column(String(200))  # 瓶颈层描述, 如 'InP衬底/DFB激光器'
+    top_down_path = Column(Text)  # 完整反推路径(自由文本), 例: 'AI→GPU→光模块→InP衬底'
+    enabled = Column(Boolean, default=True)
+    notes = Column(Text)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class ShisoChokepoint(Base):
+    """紫苏叶候选标的表 — 卡位公司 + 手工标注属性
+
+    由产业链 → 映射到的 A 股具体上市公司。
+    行业地位/垄断度/不可替代性等需要人工/研究维护的字段都放这里。
+    """
+    __tablename__ = 'shiso_chokepoints'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, index=True)  # 股票代码
+    name = Column(String(50))
+    chain_name = Column(String(50), nullable=False, index=True)  # 所属产业链
+    layer = Column(String(100))  # 卡位层级, 如 'InP衬底' / 'DFB激光器'
+    monopoly_score = Column(Float, default=50.0)  # 行业地位 0-100, 越高越垄断
+    player_count = Column(Integer, default=3)  # 全球/国内可比玩家数 (1-2 = 重点)
+    moat_note = Column(String(500))  # 护城河简述
+    extra_score = Column(Float, default=0.0)  # 额外加分(产业链卡位独特性)
+    supply_chain_verified = Column(Boolean, default=False)  # 是否经核实的供应链环节(非行业映射)
+    enabled = Column(Boolean, default=True)
+    notes = Column(Text)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class ShisoPick(Base):
+    """紫苏叶选股结果表 — 每日跑批的产出
+
+    字段含义与 Recommendation 类似, 但 zisuye 独立表, 不耦合。
+    """
+    __tablename__ = 'shiso_picks'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pick_date = Column(String(10), nullable=False, index=True)  # YYYY-MM-DD
+    rank = Column(Integer)  # 排序
+    code = Column(String(10), nullable=False, index=True)
+    name = Column(String(50))
+    price = Column(Float)
+    change_pct = Column(Float)
+    turnover = Column(Float)  # 换手率%
+    amount = Column(Float)  # 成交额
+    market_cap = Column(Float)  # 总市值(亿)
+    chain_name = Column(String(50))  # 所属产业链
+    layer = Column(String(100))  # 卡位层级
+    # 五问漏斗分项得分
+    industry_score = Column(Float)   # 行业地位 0-100
+    elasticity_score = Column(Float)  # 财务弹性 0-100
+    mispricing_score = Column(Float)  # 定价错误 0-100
+    extra_score = Column(Float)      # 额外加分
+    total_score = Column(Float)       # 加权总分
+    # 风控参数 (默认: -5%止损, +50%减仓1/3, 市值≤200亿, 成交≥5000万)
+    stop_loss_pct = Column(Float, default=-5.0)
+    trim_pct = Column(Float, default=50.0)  # +50% 触发减仓
+    trim_size = Column(Float, default=lambda: 1.0/3)  # 减仓 1/3 (lambda 避免类加载时固化)
+    reason = Column(Text)
+    created_at = Column(DateTime, default=datetime.now)
 
 
 # ═══════════════════════════════════════════════════════════════
