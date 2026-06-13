@@ -120,3 +120,6 @@ stock_frontend/.env.*.local
 .codex/
 .cursor/
 .aider*
+.codegraph/
+.hermes/
+.codebuddy/
