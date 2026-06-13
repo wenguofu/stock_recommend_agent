@@ -114,3 +114,9 @@ stock_frontend/.env.local
 stock_frontend/.env.*.local
 
 .superpowers/
+
+# AI 工具配置目录 (本地开发辅助, 不进版本控制)
+.claude/
+.codex/
+.cursor/
+.aider*
