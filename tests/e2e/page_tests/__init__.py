@@ -19,7 +19,6 @@ from .recommendations import RecommendationsTest
 from .high_win_recommend import HighWinRecommendTest
 from .backtest import BacktestTest
 from .sector_prediction import SectorPredictionTest
-from .sensitivity_scan import SensitivityScanTest
 from .portfolio import PortfolioTest
 from .ml_monitoring import MLMonitoringTest
 from .alert_center import AlertCenterTest
@@ -47,7 +46,6 @@ ALL_TESTS = [
     HighWinRecommendTest,
     BacktestTest,
     SectorPredictionTest,
-    SensitivityScanTest,
     PortfolioTest,
     MLMonitoringTest,
     AlertCenterTest,

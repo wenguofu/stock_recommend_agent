@@ -24,6 +24,14 @@ interface HealthItem {
   dl_prob_up?: number | null;
   dl_prob_down?: number | null;
   dl_short_return?: number | null;
+  // 中线预判 (1-4 周 outlook)
+  mid_direction?: string;
+  mid_prob_up?: number;
+  mid_prob_down?: number;
+  mid_prob_flat?: number;
+  mid_expected_return?: number;
+  mid_horizon?: string;
+  mid_model?: string;
 }
 
 interface JournalItem {
@@ -246,7 +254,7 @@ export default function Midline() {
           : record.dl_direction === 'down' ? record.dl_prob_down
           : record.dl_prob_up;
         return (
-          <Tooltip title={`预期收益: ${(record.dl_short_return || 0).toFixed(2)}%`}>
+          <Tooltip title={`短期(1-5日) 预期收益: ${(record.dl_short_return || 0).toFixed(2)}%`}>
             <Space size={4}>
               <Text strong style={{ color: dirColor, fontSize: 13 }}>{dirLabel}</Text>
               {prob != null && (
@@ -254,6 +262,39 @@ export default function Midline() {
                   {(prob * 100).toFixed(0)}%
                 </Text>
               )}
+            </Space>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      title: '中线预判',
+      key: 'mid_pred',
+      width: 140,
+      render: (_: any, record: HealthItem) => {
+        const dir = record.mid_direction;
+        if (!dir) {
+          return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+        }
+        const dirColor = dir === 'up' ? '#cf1322'
+          : dir === 'down' ? '#1677ff' : '#999';
+        const dirLabel = dir === 'up' ? '↑涨'
+          : dir === 'down' ? '↓跌' : '→平';
+        const prob = dir === 'up' ? record.mid_prob_up
+          : dir === 'down' ? record.mid_prob_down
+          : record.mid_prob_up;
+        const modelTag = record.mid_model === 'mid_term_dl' ? 'DL' : '规则';
+        const horizon = record.mid_horizon || '4w';
+        return (
+          <Tooltip title={`中线(${horizon}) 预期收益: ${((record.mid_expected_return || 0) * 100).toFixed(2)}% | 模型: ${modelTag}`}>
+            <Space size={4}>
+              <Text strong style={{ color: dirColor, fontSize: 13 }}>{dirLabel}</Text>
+              {prob != null && (
+                <Text style={{ fontSize: 11, color: '#666' }}>
+                  {(prob * 100).toFixed(0)}%
+                </Text>
+              )}
+              <Text style={{ fontSize: 10, color: '#999' }}>[{modelTag}]</Text>
             </Space>
           </Tooltip>
         );

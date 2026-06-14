@@ -21,7 +21,6 @@ import BacktestPage from './pages/BacktestPage';
 import SectorPrediction from './pages/SectorPrediction';
 import Midline from './pages/Midline';
 import MLMonitoring from './pages/MLMonitoring';
-import SensitivityScan from './pages/SensitivityScan';
 import PortfolioOptimizer from './pages/PortfolioOptimizer';
 import AlertCenter from './pages/AlertCenter';
 import StrategyConfig from './pages/StrategyConfig';
@@ -74,7 +73,6 @@ function App() {
                   <Route path="/sector-prediction" element={<SectorPrediction />} />
                   <Route path="/midline" element={<Midline />} />
                   <Route path="/monitoring" element={<MLMonitoring />} />
-                  <Route path="/sensitivity" element={<SensitivityScan />} />
                   <Route path="/portfolio" element={<PortfolioOptimizer />} />
                   <Route path="/alerts" element={<AlertCenter />} />
                   <Route path="/strategy-config" element={<StrategyConfig />} />

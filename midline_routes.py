@@ -15,8 +15,113 @@
 
 from flask import jsonify, request
 import json
+import os
 from datetime import datetime
+from typing import Optional
 from sqlalchemy import text
+
+
+# ── 中线真实预判 (Sprint 后) ──
+
+# 模型 checkpoint 目录 (与 short_term 同一目录)
+_MIDLINE_MODEL_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "model_checkpoints",
+)
+
+
+def _try_mid_term_dl(code: str) -> Optional[dict]:
+    """尝试 mid_term DL 预测 (1-4 周), 失败返回 None (不抛)。
+
+    Returns: dict 含 mid_direction / mid_prob_up/down/flat / mid_expected_return / mid_horizon
+    """
+    try:
+        from factor_engine import get_feature_vector
+        fv = get_feature_vector(code)
+        if not fv or len(fv.get("daily_features", [])) < 30:
+            return None
+        from dl_models.mid_term_predictor import MidTermPredictor
+        model_path = os.path.join(_MIDLINE_MODEL_DIR, "mid_term_latest.pt")
+        if not os.path.exists(model_path):
+            return None
+        model = MidTermPredictor.load(model_path)
+        # regime_encoding: [bull, bear, sideways] 均匀默认
+        result = model.predict(
+            fv["daily_features"],
+            fv.get("fundamental_features", [0.0] * 6),
+            [0.33, 0.33, 0.34],
+        )
+        return {
+            "mid_direction": result.get("direction", "flat"),
+            "mid_prob_up": float(result.get("prob_up", 0.5)),
+            "mid_prob_down": float(result.get("prob_down", 0.3)),
+            "mid_prob_flat": float(result.get("prob_flat", 0.2)),
+            "mid_expected_return": float(result.get("expected_return", 0.0)),
+            "mid_horizon": result.get("horizon", "4w"),
+        }
+    except Exception:
+        return None
+
+
+def _rule_based_midline_predict(score: dict) -> dict:
+    """基于 _score_stock 输出的规则中线预判 (DL 不可用时 fallback)。
+
+    规则 (Sprint 经验值, 待 ML 校准):
+      - 总分 >= 70 + MACD 多头  → 上涨 (prob_up 0.65, 期望收益 +3%)
+      - 总分 <= 30 OR 死叉     → 下跌 (prob_down 0.55, 期望收益 -2%)
+      - 其他                    → 震荡 (prob_up 0.50, 期望收益 0%)
+    """
+    total = score.get("total", 50)
+    macd = score.get("macd_signal", "")
+    if total >= 70 and macd in ("多头", "强势多头"):
+        return {
+            "mid_direction": "up",
+            "mid_prob_up": 0.65, "mid_prob_down": 0.20, "mid_prob_flat": 0.15,
+            "mid_expected_return": 0.03,
+        }
+    if total <= 30 or macd == "死叉":
+        return {
+            "mid_direction": "down",
+            "mid_prob_up": 0.30, "mid_prob_down": 0.55, "mid_prob_flat": 0.15,
+            "mid_expected_return": -0.02,
+        }
+    return {
+        "mid_direction": "flat",
+        "mid_prob_up": 0.50, "mid_prob_down": 0.30, "mid_prob_flat": 0.20,
+        "mid_expected_return": 0.0,
+    }
+
+
+def midline_predict(code: str, dl_enabled: bool = True) -> dict:
+    """中线真实预判 (1-4 周 outlook)。
+
+    优先 mid_term DL 模型, 失败回落到 rule-based, 再失败返回安全默认。
+    返回字段: mid_direction / mid_prob_up/down/flat / mid_expected_return / mid_horizon / mid_model
+    """
+    if dl_enabled:
+        try:
+            dl = _try_mid_term_dl(code)
+            if dl:
+                dl["mid_model"] = "mid_term_dl"
+                return dl
+        except Exception:
+            # DL 异常 (checkpoint 损坏 / torch 缺失等) → 静默回落 rule-based
+            pass
+    # rule-based fallback
+    try:
+        score = _score_stock(code)
+        result = _rule_based_midline_predict(score)
+        result["mid_model"] = "rule_based"
+        result["mid_horizon"] = "4w"
+        return result
+    except Exception:
+        return {
+            "mid_direction": "flat",
+            "mid_prob_up": 0.5, "mid_prob_down": 0.3, "mid_prob_flat": 0.2,
+            "mid_expected_return": 0.0,
+            "mid_horizon": "4w",
+            "mid_model": "rule_based",
+        }
 
 
 def register_midline_routes(app):
@@ -66,6 +171,9 @@ def register_midline_routes(app):
                     except Exception:
                         pass  # DL not available, leave as None
 
+                    # 中线真实预判 (1-4 周) — 优先 mid_term DL, 失败回落 rule-based
+                    mid_pred = midline_predict(item.code, dl_enabled=True)
+
                     results.append({
                         "code": item.code,
                         "name": item.name,
@@ -81,6 +189,14 @@ def register_midline_routes(app):
                         "dl_prob_up": dl_prob_up,
                         "dl_prob_down": dl_prob_down,
                         "dl_short_return": dl_short_return,
+                        # 中线预判 (mid-term, 1-4 周)
+                        "mid_direction": mid_pred["mid_direction"],
+                        "mid_prob_up": mid_pred["mid_prob_up"],
+                        "mid_prob_down": mid_pred["mid_prob_down"],
+                        "mid_prob_flat": mid_pred["mid_prob_flat"],
+                        "mid_expected_return": mid_pred["mid_expected_return"],
+                        "mid_horizon": mid_pred["mid_horizon"],
+                        "mid_model": mid_pred["mid_model"],
                     })
                 except Exception:
                     results.append({
@@ -94,6 +210,13 @@ def register_midline_routes(app):
                         "dl_prob_up": None,
                         "dl_prob_down": None,
                         "dl_short_return": None,
+                        "mid_direction": "flat",
+                        "mid_prob_up": 0.5,
+                        "mid_prob_down": 0.3,
+                        "mid_prob_flat": 0.2,
+                        "mid_expected_return": 0.0,
+                        "mid_horizon": "4w",
+                        "mid_model": "rule_based",
                     })
             results.sort(key=lambda x: x["score"], reverse=True)
 

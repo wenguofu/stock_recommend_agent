@@ -28,7 +28,6 @@ const QUANT_NAV = [
   { path: '/strategies', label: '策略库', icon: <OrderedListOutlined /> },
   { path: '/strategy', label: '策略推荐', icon: <ThunderboltOutlined /> },
   { path: '/backtest', label: '回测', icon: <BarChartOutlined /> },
-  { path: '/sensitivity', label: '敏感度扫描', icon: <ExperimentOutlined /> },
   { path: '/portfolio', label: '组合优化', icon: <ExperimentOutlined /> },
   { path: '/sector-prediction', label: '主线预判', icon: <AimOutlined /> },
   { path: '/monitoring', label: 'ML 监控', icon: <MonitorOutlined /> },
