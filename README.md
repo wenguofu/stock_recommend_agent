@@ -33,10 +33,10 @@
 # 安装 MySQL (macOS)
 brew install mysql && brew services start mysql
 
-# 创建数据库和用户
+# 创建数据库和用户 (⚠️  把 <your-strong-password> 改成自己的强密码, 不要用示例值)
 mysql -u root -e "
   CREATE DATABASE IF NOT EXISTS stock_trading CHARACTER SET utf8mb4;
-  CREATE USER IF NOT EXISTS 'stock_user'@'localhost' IDENTIFIED BY 'stock_pass_2024';
+  CREATE USER IF NOT EXISTS 'stock_user'@'localhost' IDENTIFIED BY '<your-strong-password>';
   GRANT ALL PRIVILEGES ON stock_trading.* TO 'stock_user'@'localhost';
 "
 
@@ -50,7 +50,8 @@ pip install -r requirements.txt
 # 配置环境变量
 cp .env.example .env
 # 编辑 .env 填入 AI 密钥（优先级高于 DB 存储）
-# DATABASE_URL 必填 (MySQL DSN)，未设或非 MySQL 启动直接报错
+# DATABASE_URL 必填 (MySQL DSN), 密码用上一步设置的强密码, 不要用示例值
+# 未设或非 MySQL 启动直接报错
 
 # 启动
 python3 api_server.py &          # 后端 → http://localhost:35000
