@@ -275,11 +275,6 @@ RSI 区间 (30分): 40-70健康, 30-40偏弱, >70超买, <30超卖
 - 模拟盘 + 买卖计划 + ETF 替代
 
 ---
-
-## ⭐ Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=DLWangSan/a-stock-trading&type=date&legend=bottom-right)](https://www.star-history.com/#DLWangSan/a-stock-trading&type=date&legend=bottom-right)
-
 ---
 
 ## ⚖️ 免责声明
