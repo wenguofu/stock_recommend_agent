@@ -86,7 +86,7 @@ def register_scheduler_routes(app):
         from models import SchedulerRunLog, SessionLocal
         db = SessionLocal()
         try:
-            row = db.query(SchedulerRunLog).get(run_id)
+            row = db.get(SchedulerRunLog, run_id)
             if not row:
                 return jsonify({"success": False, "error": "not found"}), 404
             return {"success": True, "data": _serialize_run(row)}
