@@ -486,6 +486,32 @@ class TaskScheduler:
         with open(self._output_file, 'w') as f:
             json.dump(records, f, ensure_ascii=False)
 
+    def _save_run_log(self, task, started_at, status, output, error, trigger_source):
+        """持久化一次调度器任务执行记录到 scheduler_run_log 表"""
+        from models import SchedulerRunLog, SessionLocal
+        finished_at = datetime.now()
+        db = SessionLocal()
+        try:
+            row = SchedulerRunLog(
+                task_name=task['name'],
+                task_type=task.get('type'),
+                schedule=(
+                    str(task.get('interval', '')) if task.get('type') == 'interval'
+                    else task.get('cron', '')
+                ),
+                status=status,
+                output=(output or '')[:10000],
+                error=error,
+                started_at=started_at,
+                finished_at=finished_at,
+                duration_ms=int((finished_at - started_at).total_seconds() * 1000),
+                trigger_source=trigger_source,
+            )
+            db.add(row)
+            db.commit()
+        finally:
+            db.close()
+
     def get_recent_outputs(self, limit=20):
         """获取最近任务输出"""
         if not os.path.exists(self._output_file):
@@ -548,31 +574,45 @@ class TaskScheduler:
             return False
         return True
 
-    def _run_task(self, task):
-        """执行单个任务(带 in-flight 锁,避免并发重入)"""
+    def _run_task(self, task, trigger_source='auto'):
+        """执行单个任务(带 in-flight 锁 + 日志落库)"""
         task_name = task['name']
-        # 修复 BUG-05: 任务级 in-flight 锁,避免定时+手动触发并发
         if task.get('_in_flight'):
             self._log(f"⏸ {task_name}: 已在执行中,跳过本次触发")
             return False
         task['_in_flight'] = True
+        task['_current_started_at'] = datetime.now().isoformat()
+        started_at = datetime.now()
         self._log(f"▶ 开始执行: {task_name}")
+        self._save_run_log(
+            task=task, started_at=started_at, status='running',
+            output=None, error=None, trigger_source=trigger_source,
+        )
         try:
             output = task['func']()
             if output:
                 task['last_output'] = output
                 self._log(f"✅ {task_name}: {output[:100]}")
                 self._save_output(task_name, output)
+                self._save_run_log(
+                    task=task, started_at=started_at, status='success',
+                    output=output, error=None, trigger_source=trigger_source,
+                )
             else:
                 self._log(f"⏭ {task_name}: 跳过（非执行时段或无输出）")
         except Exception as e:
             err = f"{type(e).__name__}: {e}"
             task['last_error'] = err
             self._log(f"❌ {task_name} 失败: {err}")
+            self._save_run_log(
+                task=task, started_at=started_at, status='failed',
+                output=None, error=err, trigger_source=trigger_source,
+            )
         finally:
             task['last_run'] = time.time()
             task['run_count'] += 1
             task['_in_flight'] = False
+            task['_current_started_at'] = None
         return True
 
     def _loop(self):
@@ -588,10 +628,10 @@ class TaskScheduler:
                 for task in self.tasks:
                     if task['type'] == 'interval':
                         if now - task['last_run'] >= task['interval']:
-                            self._run_task(task)
+                            self._run_task(task, trigger_source='auto')
                     elif task['type'] == 'cron':
                         if self._should_run_cron(task):
-                            self._run_task(task)
+                            self._run_task(task, trigger_source='auto')
             except Exception as e:
                 self._log(f"🛑 循环异常: {e}")
             time.sleep(30)  # 每30秒检查一次
@@ -620,7 +660,7 @@ class TaskScheduler:
                 # 但也要检查时间段限制（交易时段/收盘后）
                 task_name = task['name']
                 self._log(f"⏰ 补跑错过的cron任务: {task_name} ({parts[0]}:{parts[1]})")
-                self._run_task(task)
+                self._run_task(task, trigger_source='auto')
                 # 标记今天已跑
                 task['last_date'] = today
 
@@ -635,7 +675,7 @@ class TaskScheduler:
                         "error": f"任务 {task['name']} 正在执行中,请稍后再试",
                         "in_flight": True,
                     }
-                result = self._run_task(task)
+                result = self._run_task(task, trigger_source='manual')
                 if result is False:
                     return {"success": False, "error": "任务被跳过(并发或时段限制)"}
                 return {"success": True, "name": task['name']}
