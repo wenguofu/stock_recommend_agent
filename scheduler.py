@@ -525,15 +525,20 @@ class TaskScheduler:
 
     def get_status(self):
         """获取所有任务状态"""
-        return [{
-            'name': t['name'],
-            'type': t['type'],
-            'schedule': str(t.get('interval', '')) if t['type'] == 'interval' else t.get('cron', ''),
-            'run_count': t['run_count'],
-            'last_run': datetime.fromtimestamp(t['last_run']).strftime('%Y-%m-%d %H:%M:%S') if t['last_run'] else '从未运行',
-            'last_output': t['last_output'][:200] if t['last_output'] else '',
-            'last_error': t['last_error'],
-        } for t in self.tasks]
+        result = []
+        for t in self.tasks:
+            result.append({
+                'name': t['name'],
+                'type': t['type'],
+                'schedule': str(t.get('interval', '')) if t['type'] == 'interval' else t.get('cron', ''),
+                'run_count': t['run_count'],
+                'last_run': datetime.fromtimestamp(t['last_run']).strftime('%Y-%m-%d %H:%M:%S') if t['last_run'] else '从未运行',
+                'last_output': t['last_output'][:200] if t['last_output'] else '',
+                'last_error': t['last_error'],
+                'in_flight': bool(t.get('_in_flight')),
+                'current_started_at': t.get('_current_started_at'),
+            })
+        return result
 
     def _match_cron(self, task):
         """检查cron任务是否到时间运行"""
