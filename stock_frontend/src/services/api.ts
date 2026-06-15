@@ -693,7 +693,7 @@ class StockAPI {
 
   // ═══════════ Scheduler runs + Task logs by date (TaskExecution + TaskResults pages) ═══════════
 
-  async schedulerStatus(): Promise<{ success: boolean; tasks: any[] }> {
+  async schedulerStatus(): Promise<{ success: boolean; tasks: SchedulerRun[] }> {
     return this.request(`/api/scheduler/status`);
   }
 
