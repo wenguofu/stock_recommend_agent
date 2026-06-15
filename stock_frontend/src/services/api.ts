@@ -132,6 +132,18 @@ export interface SchedulerRun {
   trigger_source: string | null;
 }
 
+export interface SchedulerStatusTask {
+  name: string;
+  type: string;
+  schedule: string;
+  run_count: number;
+  last_run: string;            // already-formatted "YYYY-MM-DD HH:MM:SS" or "从未运行"
+  last_output: string;
+  last_error: string | null;
+  in_flight: boolean;
+  current_started_at: string | null;
+}
+
 export interface TaskLogEntry {
   id: number;
   status: string;
@@ -693,7 +705,7 @@ class StockAPI {
 
   // ═══════════ Scheduler runs + Task logs by date (TaskExecution + TaskResults pages) ═══════════
 
-  async schedulerStatus(): Promise<{ success: boolean; tasks: SchedulerRun[] }> {
+  async schedulerStatus(): Promise<{ success: boolean; tasks: SchedulerStatusTask[] }> {
     return this.request(`/api/scheduler/status`);
   }
 

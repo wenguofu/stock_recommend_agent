@@ -1,37 +1,25 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, Tabs, Button, Tag, Space, Typography, Empty, Spin, Alert } from 'antd';
 import { ReloadOutlined, PlayCircleOutlined, PauseCircleOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
-import { stockAPI } from '../services/api';
+import { stockAPI, SchedulerStatusTask } from '../services/api';
 
 const { Title, Text } = Typography;
 
-function formatDuration(ms: number | null | undefined): string {
-  if (ms == null) return '';
-  if (ms < 1000) return `${ms}ms`;
-  const sec = Math.floor(ms / 1000);
+function formatElapsed(startedAt: string | null): string {
+  if (!startedAt) return '';
+  const start = new Date(startedAt).getTime();
+  const now = Date.now();
+  const sec = Math.floor((now - start) / 1000);
   if (sec < 60) return `${sec}s`;
   const min = Math.floor(sec / 60);
   const s = sec % 60;
   return `${min}m${s.toString().padStart(2, '0')}s`;
 }
 
-const STATUS_COLOR: Record<string, string> = {
-  running: 'green',
-  completed: 'blue',
-  failed: 'red',
-  pending: 'default',
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  running: '执行中',
-  completed: '已完成',
-  failed: '失败',
-  pending: '待执行',
-};
-
 export default function TaskExecution() {
   const [tick, setTick] = useState(0);
+  const [now, setNow] = useState<number>(Date.now());
   const { data: statusData, isLoading: statusLoading } = useQuery({
     queryKey: ['scheduler-status', tick],
     queryFn: () => stockAPI.schedulerStatus(),
@@ -41,11 +29,20 @@ export default function TaskExecution() {
     queryFn: () => stockAPI.listTasks(),
   });
 
+  // Re-render once per second so formatElapsed() updates without refetching
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
   const handleRefresh = () => setTick((t) => t + 1);
 
-  const tasks: any[] = (statusData?.tasks as any[]) || [];
-  const running = tasks.filter((t) => t.status === 'running').length;
-  const failed = tasks.filter((t) => t.status === 'failed').length;
+  const tasks: SchedulerStatusTask[] = (statusData?.tasks as SchedulerStatusTask[]) || [];
+  const running = tasks.filter((t) => t.in_flight === true).length;
+  const idle = tasks.filter((t) => t.in_flight === false).length;
+  const totalRuns = tasks.reduce((sum, t) => sum + (t.run_count || 0), 0);
+  // Reference `now` so it participates in the render lifecycle
+  void now;
 
   const schedulerTab = (
     <div data-testid="scheduler-tab">
@@ -55,10 +52,10 @@ export default function TaskExecution() {
             执行中: <Tag color="green">{running}</Tag>
           </Text>
           <Text>
-            失败: <Tag color="red">{failed}</Tag>
+            空闲: <Tag color="default">{idle}</Tag>
           </Text>
           <Text>
-            总数: <Tag color="blue">{tasks.length}</Tag>
+            累计运行: <Tag color="blue">{totalRuns}</Tag>
           </Text>
         </Space>
       </Card>
@@ -71,40 +68,36 @@ export default function TaskExecution() {
       ) : (
         <Space direction="vertical" style={{ width: '100%' }} size={12}>
           {tasks.map((t) => (
-            <Card key={t.id ?? t.task_name} size="small">
+            <Card key={t.name} size="small">
               <Space style={{ marginBottom: 8 }} wrap>
-                {t.status === 'running' ? (
+                {t.in_flight ? (
                   <Tag color="green" icon={<PlayCircleOutlined />}>
-                    {STATUS_LABEL[t.status] || t.status}
-                  </Tag>
-                ) : t.status === 'failed' ? (
-                  <Tag color="red" icon={<PauseCircleOutlined />}>
-                    {STATUS_LABEL[t.status] || t.status}
+                    🟢执行中 {formatElapsed(t.current_started_at)}
                   </Tag>
                 ) : (
-                  <Tag color={STATUS_COLOR[t.status] || 'default'}>
-                    {STATUS_LABEL[t.status] || t.status}
+                  <Tag color="default" icon={<PauseCircleOutlined />}>
+                    ⏸空闲
                   </Tag>
                 )}
-                <Text strong>{t.task_name}</Text>
-                {t.task_type && <Tag color="blue">{t.task_type}</Tag>}
+                <Text strong>{t.name}</Text>
+                {t.type && <Tag color="blue">{t.type}</Tag>}
                 {t.schedule && <Tag>{t.schedule}</Tag>}
-                {t.duration_ms != null && <Tag color="cyan">{formatDuration(t.duration_ms)}</Tag>}
+                <Tag color="cyan">累计 {t.run_count} 次</Tag>
               </Space>
-              {t.started_at && (
+              {t.last_run && (
                 <div>
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    上次运行: {t.started_at}
+                    上次运行: {t.last_run}
                   </Text>
                 </div>
               )}
-              {t.output && (
-                <div style={{ marginTop: 4, fontSize: 12, color: '#666' }}>{t.output}</div>
+              {t.last_output && (
+                <div style={{ marginTop: 4, fontSize: 12, color: '#666' }}>{t.last_output}</div>
               )}
-              {t.error && (
+              {t.last_error && (
                 <Alert
                   type="error"
-                  message={t.error}
+                  message={t.last_error}
                   showIcon
                   style={{ marginTop: 8 }}
                 />
