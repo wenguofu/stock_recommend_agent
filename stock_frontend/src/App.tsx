@@ -25,6 +25,7 @@ import PortfolioOptimizer from './pages/PortfolioOptimizer';
 import AlertCenter from './pages/AlertCenter';
 import StrategyConfig from './pages/StrategyConfig';
 import TaskExecution from './pages/TaskExecution';
+import TaskResults from './pages/TaskResults';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import NotFound from './pages/NotFound';
@@ -78,6 +79,7 @@ function App() {
                   <Route path="/alerts" element={<AlertCenter />} />
                   <Route path="/strategy-config" element={<StrategyConfig />} />
                   <Route path="/task-execution" element={<TaskExecution />} />
+                  <Route path="/task-results" element={<TaskResults />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </ErrorBoundary>
