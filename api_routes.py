@@ -1181,9 +1181,15 @@ def register_routes(app):
         from models import TaskLog
         db = SessionLocal()
         try:
+            date_str = request.args.get('date', '')
             limit = int(request.args.get('limit', 20))
-            logs = db.query(TaskLog).filter(TaskLog.task_id == task_id)\
-                .order_by(TaskLog.started_at.desc()).limit(limit).all()
+            q = db.query(TaskLog).filter(TaskLog.task_id == task_id)
+            if date_str:
+                q = q.filter(
+                    TaskLog.started_at >= f'{date_str} 00:00:00',
+                    TaskLog.started_at <  f'{date_str} 23:59:59',
+                )
+            logs = q.order_by(TaskLog.started_at.desc()).limit(limit).all()
             return jsonify({
                 'success': True,
                 'data': [{
