@@ -118,6 +118,29 @@ export interface StrategyDetail extends StrategySummary {
   }>;
 }
 
+export interface SchedulerRun {
+  id: number;
+  task_name: string;
+  task_type: string | null;
+  schedule: string | null;
+  status: string;
+  output: string;
+  error: string;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+  trigger_source: string | null;
+}
+
+export interface TaskLogEntry {
+  id: number;
+  status: string;
+  triggered_count: number;
+  result: Record<string, any>;
+  started_at: string;
+  finished_at: string | null;
+}
+
 class StockAPI {
   private baseURL: string;
 
@@ -666,6 +689,29 @@ class StockAPI {
 
   async clearCache(): Promise<any> {
     return this.request(`/api/cache/clear`, { method: "POST" });
+  }
+
+  // ═══════════ Scheduler runs + Task logs by date (TaskExecution + TaskResults pages) ═══════════
+
+  async schedulerStatus(): Promise<{ success: boolean; tasks: any[] }> {
+    return this.request(`/api/scheduler/status`);
+  }
+
+  async schedulerRuns(date: string, task?: string, limit = 200): Promise<{ success: boolean; data: SchedulerRun[] }> {
+    const params = new URLSearchParams({ date, limit: String(limit) });
+    if (task) params.append('task', task);
+    const data = await this.request<{ success: boolean; data: SchedulerRun[] }>(`/api/scheduler/runs?${params.toString()}`);
+    return data;
+  }
+
+  async schedulerRunDetail(id: number): Promise<{ success: boolean; data: SchedulerRun }> {
+    return this.request(`/api/scheduler/runs/${id}`);
+  }
+
+  async taskLogsByDate(taskId: number, date: string, limit = 200): Promise<{ success: boolean; data: TaskLogEntry[] }> {
+    const params = new URLSearchParams({ date, limit: String(limit) });
+    const data = await this.request<{ success: boolean; data: TaskLogEntry[] }>(`/api/tasks/${taskId}/logs?${params.toString()}`);
+    return data;
   }
 }
 
