@@ -352,7 +352,7 @@ class BacktestStockMeta(Base):
 class TaskLog(Base):
     """任务执行日志表"""
     __tablename__ = 'task_logs'
-    
+
     id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(Integer, nullable=False)
     task_name = Column(String(100))
@@ -362,6 +362,22 @@ class TaskLog(Base):
     triggered_count = Column(Integer, default=0)
     started_at = Column(DateTime)
     finished_at = Column(DateTime)
+
+class SchedulerRunLog(Base):
+    """内置调度器执行日志表"""
+    __tablename__ = 'scheduler_run_log'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_name = Column(String(100), nullable=False, index=True)
+    task_type = Column(String(20))
+    schedule = Column(String(50))
+    status = Column(String(20), nullable=False)
+    output = Column(Text)
+    error = Column(Text)
+    started_at = Column(DateTime, nullable=False, index=True)
+    finished_at = Column(DateTime)
+    duration_ms = Column(Integer)
+    trigger_source = Column(String(20))
 
 class Recommendation(Base):
     """推荐结果表"""
