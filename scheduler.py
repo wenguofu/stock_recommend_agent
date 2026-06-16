@@ -533,7 +533,7 @@ class TaskScheduler:
                 'schedule': str(t.get('interval', '')) if t['type'] == 'interval' else t.get('cron', ''),
                 'run_count': t['run_count'],
                 'last_run': datetime.fromtimestamp(t['last_run']).strftime('%Y-%m-%d %H:%M:%S') if t['last_run'] else '从未运行',
-                'last_output': t['last_output'][:200] if t['last_output'] else '',
+                'last_output': str(t['last_output'])[:200] if t['last_output'] else '',
                 'last_error': t['last_error'],
                 'in_flight': bool(t.get('_in_flight')),
                 'current_started_at': t.get('_current_started_at'),
