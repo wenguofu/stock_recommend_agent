@@ -1,5 +1,5 @@
 """
-所有 25 个页面的 E2E 测试定义
+所有页面的 E2E 测试定义
 """
 from .home import HomeTest
 from .watchlist import WatchlistTest
@@ -25,13 +25,29 @@ from .alert_center import AlertCenterTest
 from .settings import SettingsTest
 from .midline import MidlineTest
 from .not_found import NotFoundTest
+# Sprint 7: 优化新增的 E2E 测试
+from .task_center import (
+    TaskCenterTest,
+    TaskExecutionRedirectTest,
+    TaskResultsRedirectTest,
+)
+from .command_palette import CommandPaletteTest
+from .watchlist_dedup import WatchlistDedupTest
+from .paper_top3 import PaperTop3Test
+from .stock_detail_lazy import StockDetailLazyTest
 
 
 ALL_TESTS = [
     HomeTest,
     WatchlistTest,
+    WatchlistDedupTest,
     StockDetailTest,
+    StockDetailLazyTest,
     TasksTest,
+    TaskCenterTest,
+    TaskExecutionRedirectTest,
+    TaskResultsRedirectTest,
+    CommandPaletteTest,
     StrategyTest,
     StrategyLibraryTest,
     StrategyRunTest,
@@ -39,6 +55,7 @@ ALL_TESTS = [
     StrategyConfigTest,
     AIDebateTest,
     PaperAccountsTest,
+    PaperTop3Test,
     PaperDetailTest,
     PaperRankingsTest,
     PaperBreakdownTest,
