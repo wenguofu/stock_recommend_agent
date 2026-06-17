@@ -23,6 +23,9 @@ const { Text } = Typography;
 export default function StockDetail() {
   const { code } = useParams<{ code: string }>();
   const codeStr = code || '';
+  // Tab activation gate: only fetch data for tabs the user actually opens.
+  const [activeTabKey, setActiveTabKey] = useState<string>('chart');
+  const tabActivated = (k: string) => activeTabKey === k;
 
   const { data: realtimeData, isLoading: realtimeLoading } = useQuery({
     queryKey: ['realtime', codeStr],
@@ -36,18 +39,19 @@ export default function StockDetail() {
     enabled: !!codeStr,
   });
 
-  // 基本面独立快速加载（MySQL毫秒级）
+  // 基本面独立快速加载（MySQL毫秒级）— gated by 基本面 tab
   const { data: fundamentalData, isLoading: fundamentalLoading } = useQuery({
     queryKey: ['fundamental', codeStr],
     queryFn: () => stockAPI.getFundamental(codeStr),
-    enabled: !!codeStr,
+    enabled: !!codeStr && tabActivated('fundamental'),
     staleTime: 60 * 60 * 1000, // 1小时内不重新请求
   });
 
+  // Sentiment — gated by 舆情 tab
   const { data: sentimentData, isLoading: sentimentLoading } = useQuery({
     queryKey: ['sentiment', codeStr],
     queryFn: () => stockAPI.getSentiment(codeStr, 7),
-    enabled: !!codeStr,
+    enabled: !!codeStr && tabActivated('sentiment'),
   });
 
   const { data: dailyData, isLoading: dailyLoading } = useQuery({
@@ -61,6 +65,7 @@ export default function StockDetail() {
     enabled: !!codeStr,
   });
 
+  // Watchlist position lookup — always on (drives the position banner)
   const { data: watchlistData } = useQuery({
     queryKey: ['watchlist-stock', codeStr],
     queryFn: async () => {
@@ -70,17 +75,17 @@ export default function StockDetail() {
     enabled: !!codeStr,
   });
 
-  // 股票画像与机构预测
+  // 股票画像与机构预测 — gated by 基本面 tab
   const { data: profileData } = useQuery({
     queryKey: ['stockProfile', codeStr],
     queryFn: () => stockAPI.getStockProfile(codeStr),
-    enabled: !!codeStr,
+    enabled: !!codeStr && tabActivated('fundamental'),
   });
 
   const { data: analystData } = useQuery({
     queryKey: ['analystPredictions', codeStr],
     queryFn: () => stockAPI.getAnalystPredictions(codeStr),
-    enabled: !!codeStr,
+    enabled: !!codeStr && tabActivated('fundamental'),
   });
 
   const positionCost = watchlistData?.cost_price;
@@ -97,6 +102,7 @@ export default function StockDetail() {
       ? ((currentPrice - positionCost) / positionCost) * 100
       : 0;
 
+  // 资金流向历史 — gated by 资金流向 tab
   const { data: moneyFlowHistory, isLoading: moneyFlowHistoryLoading } = useQuery({
     queryKey: ['moneyFlowHistory', codeStr],
     queryFn: async () => {
@@ -109,9 +115,10 @@ export default function StockDetail() {
         (a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()
       );
     },
-    enabled: !!codeStr,
+    enabled: !!codeStr && tabActivated('moneyflow'),
   });
 
+  // 风险 + ML — gated by 风险 tab
   const { data: riskData } = useQuery({
     queryKey: ['risk', codeStr],
     queryFn: async () => {
@@ -128,7 +135,7 @@ export default function StockDetail() {
       const result = await response.json();
       return result.data || null;
     },
-    enabled: !!codeStr,
+    enabled: !!codeStr && tabActivated('risk'),
     retry: 1,
   });
 
@@ -144,11 +151,11 @@ export default function StockDetail() {
       if (!response.ok) throw new Error('Failed to fetch ML prediction');
       return response.json();
     },
-    enabled: !!codeStr,
+    enabled: !!codeStr && tabActivated('risk'),
     retry: 1,
   });
 
-  // K线 叠加基准 + 形态标注 (Sprint enhance-stock-detail-tabs)
+  // K线 叠加基准 + 形态标注 — gated by K线图 tab (default active)
   const { data: withBenchmarkData } = useQuery({
     queryKey: ['sina-daily-with-benchmark', codeStr],
     queryFn: async () => {
@@ -157,7 +164,7 @@ export default function StockDetail() {
       if (!response.ok) throw new Error('Failed to fetch with_benchmark');
       return response.json();
     },
-    enabled: !!codeStr,
+    enabled: !!codeStr && tabActivated('chart'),
     retry: 1,
   });
 
@@ -700,7 +707,7 @@ export default function StockDetail() {
       )}
 
       <Card>
-        <Tabs items={tabItems} />
+        <Tabs activeKey={activeTabKey} onChange={setActiveTabKey} items={tabItems} />
       </Card>
     </Space>
   );

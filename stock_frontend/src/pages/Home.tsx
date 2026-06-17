@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation } from 'react-router-dom';
 import { stockAPI } from '../services/api';
+import { useWatchlist } from '../hooks/useWatchlist';
 import { useWatchlistStore } from '../store/watchlistStore';
 import { useEffect, useState } from 'react';
 import AIAnalyzeButton from '../components/AIAnalyzeButton';
@@ -37,11 +38,8 @@ export default function Home() {
 
   const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:35000';
 
-  // Paginated watchlist data
-  const { data: watchlistData } = useQuery({
-    queryKey: ['home-watchlist', watchlistPage, watchlistPageSize],
-    queryFn: () => fetch(`${apiUrl}/api/watchlist?page=${watchlistPage}&pageSize=${watchlistPageSize}`).then(r => r.json()),
-  });
+  // Paginated watchlist data (shared with /watchlist via TanStack Query cache).
+  const { data: watchlistData } = useWatchlist(watchlistPage, watchlistPageSize);
   const items = watchlistData?.data || [];
   const total = watchlistData?.total || 0;
 

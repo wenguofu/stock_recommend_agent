@@ -146,6 +146,50 @@ export default function PaperAccounts() {
           </Card>
         )}
 
+        {/* Top-3 quick ranking */}
+        {data && data.length >= 3 && (
+          <Card
+            title={<Space><span>🏆</span><span>收益排名 TOP 3</span></Space>}
+            extra={
+              <Button type="link" onClick={() => navigate('/paper/rankings')}>
+                查看完整排名 →
+              </Button>
+            }
+            size="small"
+          >
+            <Row gutter={[16, 16]}>
+              {(() => {
+                const top3 = [...data]
+                  .sort((a, b) => (b.total_profit_pct ?? 0) - (a.total_profit_pct ?? 0))
+                  .slice(0, 3);
+                const medals = ['🥇', '🥈', '🥉'];
+                return top3.map((acct, idx) => (
+                  <Col xs={24} md={8} key={acct.id}>
+                    <Card size="small" hoverable onClick={() => navigate(`/paper/${acct.id}`)}>
+                      <Space align="center">
+                        <span style={{ fontSize: 24 }}>{medals[idx]}</span>
+                        <div>
+                          <div style={{ fontWeight: 600 }}>{acct.name}</div>
+                          <div
+                            style={{
+                              color: acct.total_profit_pct >= 0 ? '#cf1322' : '#3f8600',
+                              fontSize: 18,
+                              fontWeight: 700,
+                            }}
+                          >
+                            {(acct.total_profit_pct >= 0 ? '+' : '') +
+                              acct.total_profit_pct.toFixed(2) + '%'}
+                          </div>
+                        </div>
+                      </Space>
+                    </Card>
+                  </Col>
+                ));
+              })()}
+            </Row>
+          </Card>
+        )}
+
         {/* Empty */}
         {data && data.length === 0 && !isLoading && (
           <div style={{ textAlign: "center", padding: "64px 0" }}>
