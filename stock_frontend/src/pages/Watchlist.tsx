@@ -3,6 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useWatchlistStore } from '../store/watchlistStore';
 import { stockAPI } from '../services/api';
+import { useRealtimeQuote } from '../hooks/useRealtimeQuote';
+import { useWatchlist } from '../hooks/useWatchlist';
 import AIAnalyzeButton from '../components/AIAnalyzeButton';
 import type { Agent } from '../services/api';
 import {
@@ -79,12 +81,8 @@ export default function Watchlist() {
     }
   }, [showMultiModal, agents, selectedAgentIds.length]);
 
-  // Paginated watchlist data
-  const { data: watchlistPage, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['watchlist', page, pageSize],
-    queryFn: () => fetch(`${API}/api/watchlist?page=${page}&pageSize=${pageSize}`).then(r => r.json()),
-    retry: 2,
-  });
+  // Paginated watchlist data (shared with Home via TanStack Query cache).
+  const { data: watchlistPage, isLoading, isError, error, refetch } = useWatchlist(page, pageSize);
   const items = watchlistPage?.data || [];
   const total = watchlistPage?.total || 0;
 
@@ -509,14 +507,12 @@ export default function Watchlist() {
 }
 
 // ---------- Inline table cell components ----------
+// All three cells share a single `useRealtimeQuote(code)` subscription per row,
+// so the underlying /api/sina/realtime/{code} request fires once per refetch tick
+// regardless of how many cells in a row observe it.
 
 function WatchlistPriceCell({ code }: { code: string }) {
-  const { data: realtimeData, isLoading } = useQuery({
-    queryKey: ['realtime', code],
-    queryFn: () => stockAPI.getRealtime(code),
-    refetchInterval: getRefetchInterval(),
-    enabled: !!code,
-  });
+  const { data: realtimeData, isLoading } = useRealtimeQuote(code);
 
   if (isLoading) return <Spin size="small" />;
   if (!realtimeData || realtimeData.current_price == null || realtimeData.current_price <= 0) {
@@ -531,12 +527,7 @@ function WatchlistPriceCell({ code }: { code: string }) {
 }
 
 function WatchlistChangeCell({ code }: { code: string }) {
-  const { data: realtimeData, isLoading } = useQuery({
-    queryKey: ['realtime', code],
-    queryFn: () => stockAPI.getRealtime(code),
-    refetchInterval: getRefetchInterval(),
-    enabled: !!code,
-  });
+  const { data: realtimeData, isLoading } = useRealtimeQuote(code);
 
   if (isLoading) return <Spin size="small" />;
   if (!realtimeData || realtimeData.current_price == null || realtimeData.current_price <= 0) {
@@ -567,12 +558,7 @@ function WatchlistPnlCell({
   costPrice?: number | null;
   shares?: number | null;
 }) {
-  const { data: realtimeData, isLoading } = useQuery({
-    queryKey: ['realtime', code],
-    queryFn: () => stockAPI.getRealtime(code),
-    refetchInterval: getRefetchInterval(),
-    enabled: !!code,
-  });
+  const { data: realtimeData, isLoading } = useRealtimeQuote(code);
 
   const hasPosition = costPrice != null && shares != null && shares > 0;
 
