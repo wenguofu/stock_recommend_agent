@@ -8,7 +8,6 @@ import {
   BarChartOutlined, SettingOutlined, OrderedListOutlined, TrophyOutlined,
   ScheduleOutlined, LineChartOutlined, AimOutlined, BulbOutlined,
   SafetyOutlined, MonitorOutlined, AlertOutlined, PlayCircleOutlined,
-  HistoryOutlined,
 } from '@ant-design/icons';
 
 const { Sider, Content } = AntLayout;
@@ -26,8 +25,7 @@ const QUANT_NAV = [
   { path: '/recommendations', label: '股票推荐', icon: <BulbOutlined /> },
   { path: '/high-win-recommend', label: '高胜率推荐', icon: <SafetyOutlined /> },
   { path: '/tasks', label: '任务', icon: <ScheduleOutlined /> },
-  { path: '/task-execution', label: '任务执行', icon: <PlayCircleOutlined /> },
-  { path: '/task-results', label: '任务结果', icon: <HistoryOutlined /> },
+  { path: '/task-center', label: '任务中心', icon: <PlayCircleOutlined /> },
   { path: '/strategies', label: '策略库', icon: <OrderedListOutlined /> },
   { path: '/strategy', label: '策略推荐', icon: <ThunderboltOutlined /> },
   { path: '/backtest', label: '回测', icon: <BarChartOutlined /> },
@@ -146,7 +144,7 @@ export default function Layout({ children }: LayoutProps) {
         </Content>
       </AntLayout>
       <CommandPalette
-        enabled={false}
+        enabled
         externalOpen={paletteOpen}
         onClose={() => setPaletteOpen(false)}
       />

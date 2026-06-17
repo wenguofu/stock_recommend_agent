@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConfigProvider, App as AntApp, theme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
@@ -7,6 +7,7 @@ import Watchlist from './pages/Watchlist';
 import StockDetail from './pages/StockDetail';
 import Tasks from './pages/Tasks';
 import StrategyRecommend from './pages/StrategyRecommend';
+import TaskCenter from './pages/TaskCenter';
 import StrategyLibrary from './pages/StrategyLibrary';
 import StrategyRun from './pages/StrategyRun';
 import Settings from './pages/Settings';
@@ -24,8 +25,6 @@ import MLMonitoring from './pages/MLMonitoring';
 import PortfolioOptimizer from './pages/PortfolioOptimizer';
 import AlertCenter from './pages/AlertCenter';
 import StrategyConfig from './pages/StrategyConfig';
-import TaskExecution from './pages/TaskExecution';
-import TaskResults from './pages/TaskResults';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import NotFound from './pages/NotFound';
@@ -60,6 +59,9 @@ function App() {
                   <Route path="/watchlist" element={<Watchlist />} />
                   <Route path="/stock/:code" element={<StockDetail />} />
                   <Route path="/tasks" element={<Tasks />} />
+                  <Route path="/task-center" element={<TaskCenter />} />
+                  <Route path="/task-execution" element={<Navigate to="/task-center" replace />} />
+                  <Route path="/task-results" element={<Navigate to="/task-center" replace />} />
                   <Route path="/strategy" element={<StrategyRecommend />} />
                   <Route path="/strategies" element={<StrategyLibrary />} />
                   <Route path="/strategies/:id/run" element={<StrategyRun />} />
@@ -78,8 +80,9 @@ function App() {
                   <Route path="/portfolio" element={<PortfolioOptimizer />} />
                   <Route path="/alerts" element={<AlertCenter />} />
                   <Route path="/strategy-config" element={<StrategyConfig />} />
-                  <Route path="/task-execution" element={<TaskExecution />} />
-                  <Route path="/task-results" element={<TaskResults />} />
+                  <Route path="/task-center" element={<TaskCenter />} />
+                  <Route path="/task-execution" element={<Navigate to="/task-center" replace />} />
+                  <Route path="/task-results" element={<Navigate to="/task-center" replace />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </ErrorBoundary>
