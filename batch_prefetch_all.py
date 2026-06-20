@@ -328,6 +328,22 @@ def save_progress(progress: Dict):
         json.dump(progress, f, ensure_ascii=False, indent=2)
 
 
+def get_db_completed_with_data_after(min_date: str) -> set:
+    """从 DB 读取 data_end >= min_date 的股票代码集合（用于 daily 增量跳过）。
+
+    Returns: set of stock codes whose latest data is at or after min_date.
+    """
+    from models import SessionLocal, BacktestStockMeta
+    session = SessionLocal()
+    try:
+        rows = session.query(BacktestStockMeta.code).filter(
+            BacktestStockMeta.data_end >= min_date
+        ).all()
+        return {r[0] for r in rows}
+    finally:
+        session.close()
+
+
 def get_db_completed() -> set:
     """从数据库获取已完成股票列表"""
     from models import SessionLocal, BacktestStockMeta
@@ -468,77 +484,160 @@ def batch_run(stocks: List[Dict], days: int = 365, max_workers: int = 8,
 # 7. 每日增量（供定时任务调用）
 # ═══════════════════════════════════════════════
 
-def daily_refresh():
-    """每日增量刷新：拉取所有A股最近1天数据，更新到DB"""
-    log.info("=== 每日数据增量刷新 ===")
-    
+def daily_refresh(resume: bool = True, max_workers: int = 12, max_minutes: int = 8):
+    """每日增量刷新：拉取所有A股最近1天数据，更新到DB。
+
+    与原版的区别（修复 daily_kline_data_lag bug）：
+    1. 复用 batch_run 的 progress 持久化：每次运行只处理未完成的股票
+    2. 跳过 data_end >= today_minus_1 的股票（已被最近一次刷新覆盖的）
+    3. 默认 max_workers=12（原 6）以匹配现代 CPU
+    4. 每 100 只保存进度，断点续传
+    5. soft-timeout 在 max_minutes 后停止调度新任务（已提交的等待完成）
+    """
+    log.info("=== 每日数据增量刷新（断点续传 + 跳过已更新） ===")
+
     stocks = get_all_stocks()
     if not stocks:
         log.error("获取股票列表失败")
         return {"ok": 0, "failed": 0, "total": 0}
-    
-    log.info(f"共 {len(stocks)} 只股票")
-    
-    # 拉取每只股票最近5天（确保覆盖到最近交易日）
-    # 只取最新的1条存入DB（upsert）
-    ok = 0
-    fail = 0
-    
-    # 先判断今日是否有数据（非交易日的增量是空的）
+
     today_str = date.today().isoformat()
-    
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        futures = {executor.submit(fetch_stock_data, s["code"], s["name"], 5): s for s in stocks}
-        
-        for i, future in enumerate(as_completed(futures), 1):
-            s = futures[future]
-            try:
-                records = future.result()
-                if records:
-                    # 只取最新1条（当日数据）
-                    latest = records[-1]
-                    if latest["date"] == today_str or True:  # 接受最近的数据
-                        from models import SessionLocal
-                        from db import save_backtest_data_batch
-                        db = SessionLocal()
-                        try:
-                            save_backtest_data_batch(db, s["code"], [latest])
-                            # 更新meta
-                            from db import save_backtest_meta
+    # 跳过阈值放宽到最近 7 天（覆盖周末 + 节假日），否则周末/节后第一天
+    # 跑 daily_refresh 时 yestrday_str 会是周六/周日，Sina API 只返回到
+    # 上一个交易日，导致最新数据被误判为"远期"而失败。
+    skip_threshold_str = (date.today() - timedelta(days=7)).isoformat()
+    log.info(f"今天: {today_str}, 跳过阈值: data_end >= {skip_threshold_str} (覆盖周末/节假日)")
+
+    # ── 增量过滤 ──
+    # 1) DB 已有当天/昨天的 → 视为已完成
+    # 2) 加载上次进度 → 已完成/已失败的也不重跑
+    db_completed = get_db_completed_with_data_after(skip_threshold_str)
+    log.info(f"DB 中 data_end >= {skip_threshold_str} 的: {len(db_completed)} 只")
+
+    progress = load_progress() if resume else {"completed": [], "failed": []}
+    completed_set = set(progress.get("completed", [])) | db_completed
+    failed_set = set(progress.get("failed", []))
+
+    pending = [
+        s for s in stocks
+        if s["code"] not in completed_set and s["code"] not in failed_set
+    ]
+    log.info(
+        f"待处理: {len(pending)}/{len(stocks)} (跳过已完成 {len(completed_set)}, 失败 {len(failed_set)})"
+    )
+
+    if not pending:
+        log.info("✅ 所有股票已是最新，无需处理")
+        return {"ok": len(completed_set), "failed": len(failed_set), "total": len(stocks)}
+
+    # ── 并发抓取 + 写入 ──
+    ok = len(completed_set)
+    fail = len(failed_set)
+    newly_completed: List[str] = []
+    newly_failed: List[str] = []
+    t_start = time.time()
+    soft_timeout = max_minutes * 60
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(fetch_stock_data, s["code"], s["name"], 5): s
+                   for s in pending}
+
+        try:
+            for i, future in enumerate(as_completed(futures), 1):
+                # soft-timeout: 不再调度新的等待，但让已提交的完成
+                if time.time() - t_start > soft_timeout:
+                    log.warning(
+                        f"⏰ 软超时 ({max_minutes} 分钟): 已处理 {i}/{len(pending)}; "
+                        f"剩余 {len(pending) - i} 只留待下次运行"
+                    )
+                    break
+
+                s = futures[future]
+                try:
+                    records = future.result()
+                    if records:
+                        latest = records[-1]
+                        # 接受最近 2 天的数据（节假日后回填）
+                        # 接受 last 7 天的数据（覆盖周末/节假日）
+                        if latest["date"] >= skip_threshold_str:
+                            from models import SessionLocal
+                            from db import save_backtest_data_batch, save_backtest_meta
                             from models import BacktestStockMeta
-                            meta = db.query(BacktestStockMeta).filter(
-                                BacktestStockMeta.code == s["code"]
-                            ).first()
-                            if meta:
-                                # 只更新end日期
-                                dates = [latest["date"]]
-                                if meta.data_end and meta.data_end > latest["date"]:
-                                    dates.append(meta.data_end)
-                                save_backtest_meta(
-                                    db, s["code"], s["name"],
-                                    meta.sector or "全A股",
-                                    meta.data_start or latest["date"],
-                                    max(dates),
-                                    (meta.total_days or 0) + 1,
-                                )
-                            else:
-                                save_backtest_meta(
-                                    db, s["code"], s["name"], "全A股",
-                                    latest["date"], latest["date"], 1,
-                                )
-                        finally:
-                            db.close()
-                        ok += 1
-                else:
+                            session = SessionLocal()
+                            try:
+                                # 修复 daily_kline_gap bug：保存全部 fetch 的记录，
+                                # 不只是 latest一条。否则中间日期会永远丢失，gap累积。
+                                save_backtest_data_batch(session, s["code"], records)
+                                meta = session.query(BacktestStockMeta).filter(
+                                    BacktestStockMeta.code == s["code"]
+                                ).first()
+                                if meta:
+                                    new_start = min(meta.data_start or records[0]["date"],
+                                                    records[0]["date"])
+                                    new_end = max(meta.data_end or latest["date"],
+                                                  latest["date"])
+                                    save_backtest_meta(
+                                        session, s["code"], s["name"],
+                                        meta.sector or "全A股",
+                                        new_start,
+                                        new_end,
+                                        # 实际行数（save_backtest_data_batch 已 upsert，
+                                        # 重复日期不计；这里给个保守估算避免大跳动）
+                                        (meta.total_days or 0) + len(records),
+                                    )
+                                else:
+                                    save_backtest_meta(
+                                        session, s["code"], s["name"], "全A股",
+                                        records[0]["date"],
+                                        records[-1]["date"],
+                                        len(records),
+                                    )
+                                newly_completed.append(s["code"])
+                                ok += 1
+                            finally:
+                                session.close()
+                        else:
+                            # 远期数据（> 昨天）—— 不更新本次，但标记为失败以便下次重试
+                            newly_failed.append(s["code"])
+                            fail += 1
+                    else:
+                        newly_failed.append(s["code"])
+                        fail += 1
+                except Exception as e:
+                    log.warning(f"  ❌ {s['code']} {s.get('name','')}: {e}")
+                    newly_failed.append(s["code"])
                     fail += 1
-            except Exception as e:
-                fail += 1
-            
-            if i % 500 == 0:
-                log.info(f"  进度: {i}/{len(stocks)} | OK={ok} FAIL={fail}")
-    
-    log.info(f"✅ 增量完成: {ok} 成功 / {fail} 失败")
-    return {"ok": ok, "failed": fail, "total": len(stocks)}
+
+                # 每 100 只持久化一次进度（断点续传）
+                if i % 100 == 0:
+                    save_progress({
+                        "completed": list(completed_set) + newly_completed,
+                        "failed": list(failed_set) + newly_failed,
+                        "started_at": datetime.now().isoformat(),
+                        "total": len(stocks),
+                    })
+                    elapsed = time.time() - t_start
+                    rate = i / elapsed * 60 if elapsed > 0 else 0
+                    log.info(
+                        f"  📊 进度: {i}/{len(pending)} | OK={len(newly_completed)} "
+                        f"FAIL={len(newly_failed)} | {rate:.0f}只/min"
+                    )
+        finally:
+            # 退出前（无论超时或完成）保存进度
+            save_progress({
+                "completed": list(completed_set) + newly_completed,
+                "failed": list(failed_set) + newly_failed,
+                "started_at": datetime.now().isoformat(),
+                "total": len(stocks),
+            })
+
+    elapsed = time.time() - t_start
+    log.info(
+        f"✅ 本次刷新: 新增 OK={len(newly_completed)} FAIL={len(newly_failed)} "
+        f"| 累计 OK={ok} FAIL={fail} | 耗时 {elapsed:.0f}s"
+    )
+    return {"ok": ok, "failed": fail, "total": len(stocks),
+            "newly_ok": len(newly_completed), "newly_failed": len(newly_failed)}
 
 
 # ═══════════════════════════════════════════════
@@ -591,7 +690,7 @@ if __name__ == "__main__":
             max_workers = int(arg.split("=", 1)[1])
     
     if daily_mode:
-        daily_refresh()
+        daily_refresh(resume=resume)
     else:
         stocks = get_all_stocks()
         if not stocks:
