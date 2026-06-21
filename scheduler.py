@@ -379,6 +379,20 @@ TASKS = [
         'last_error': '',
     },
     {
+        # 收盘后增量补齐：每日 21:00（市场 15:00 收盘后 6 小时），用
+        # daily_refresh 跳过已最新股票，只补回缺失日期。该任务利用
+        # batch_prefetch_all.py 修复后的断点续传 + 全记录保存逻辑。
+        'name': '全A股日线盘后补齐',
+        'func': task_daily_prefetch,
+        'type': 'cron',
+        'cron': '0 21 * * 1-5',
+        'last_date': '',
+        'last_run': 0,
+        'run_count': 0,
+        'last_output': '',
+        'last_error': '',
+    },
+    {
         'name': '板块盘后交叉分析',
         'func': task_sector_analysis,
         'type': 'cron',
